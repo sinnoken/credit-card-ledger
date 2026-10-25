@@ -127,10 +127,10 @@ kbd {
 .note.bad { border-left-color: var(--bad-ink); color: var(--bad-ink); background: var(--bad-bg); }
 .note.ok { border-left-color: var(--ok-ink); }
 .empty {
-  border: 1px solid var(--rule); background: var(--surface); padding: 18px 20px; display: grid; gap: 4px;
-  background-image: repeating-linear-gradient(to bottom, transparent 0 27px, var(--rule) 27px 28px);
-  background-position: 0 14px;
+  background: var(--run-bg); border-left: 3px solid var(--rule-strong); border-radius: var(--r);
+  padding: 16px 20px; display: grid; gap: 6px;
 }
+.empty.done { background: var(--ok-bg); border-left-color: var(--ok-ink); }
 .empty p { max-width: 65ch; }
 .empty .sub { color: var(--muted); font-size: 13px; }
 .empty.done p:first-child { font-weight: 700; color: var(--ok-ink); }
