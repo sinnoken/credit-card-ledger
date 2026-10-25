@@ -533,15 +533,18 @@
     $("#gate-ack").checked = S.ack;
     const fixed = rows.filter((r) => r.sheet === "固定").length, flo = rows.length - fixed;
     const dis = !rows.length || gated || running;
+    const pay = CC.exporter.payRows(checks()).length;
     $("#btn-xlsx").disabled = dis; $("#btn-fixed").disabled = dis || !fixed; $("#btn-float").disabled = dis || !flo;
+    $("#btn-pay").disabled = dis || !pay;
     $("#btn-xlsx").hidden = S.dl === null;
     $("#btn-fixed").textContent = `複製固定（${fixed}）`; $("#btn-float").textContent = `複製浮動（${flo}）`;
+    $("#btn-pay").textContent = `複製繳費（${pay}）`;
     const pend = S.rows.filter(isPending).length;
     $("#export-summary").textContent = !rows.length ? "等明細出來" : running ? "還在處理帳單…" :
       pend ? `還有 ${pend} 筆待確認，也可以先匯出` : "可以匯出了";
     $("#export-hint").textContent = S.dl === null
-      ? "這個環境不能存檔，請用「複製固定」「複製浮動」，貼到活頁簿對應的工作表。複製的內容含標題列。"
-      : "Excel 檔含「固定」「浮動」「核對結果」三張工作表。複製的內容含標題列，可直接貼到活頁簿。";
+      ? "這個環境不能存檔，請用「複製固定」「複製浮動」「複製繳費」，貼到活頁簿對應的工作表。複製的內容含標題列。"
+      : "Excel 檔含「固定」「浮動」「核對結果」「繳費」四張工作表。複製的內容含標題列，可直接貼到活頁簿。";
   }
   function exportRows(sheet) {
     return S.rows.filter((r) => !r.excluded && (!sheet || r.sheet === sheet))
@@ -552,6 +555,7 @@
     return S.files.map((f) => ({
       file: f.name, bank: f.bank ? f.bank.name : "", closing: f.st ? f.st.closing : null,
       prev: f.st ? f.st.prev : null, cur: f.st ? f.st.cur : null, due: f.st ? f.st.due : null,
+      card: f.bank ? ((S.settings.cards || {})[f.bank.id] || {}).name || f.bank.card : "",
       total: f.rec ? f.rec.total : null, expect: f.rec ? f.rec.expect : null,
       ok: fileOk(f), count: f.count || 0, // a statement warn (st.warn) is not "OK" in 核對結果
 
@@ -575,7 +579,9 @@
     renderExport(); renderSteps();
   }
   function doCopy(sheet) {
-    const rows = exportRows(sheet), tsv = CC.exporter.toTSV(rows), box = $("#tsv-box"), ta = $("#tsv-text");
+    const pay = sheet === "繳費", box = $("#tsv-box"), ta = $("#tsv-text");
+    const rows = pay ? CC.exporter.payRows(checks()) : exportRows(sheet);
+    const tsv = pay ? CC.exporter.payTSV(checks()) : CC.exporter.toTSV(rows);
     const fallback = () => {
       box.hidden = false; ta.value = tsv; ta.focus(); ta.select();
       msg("#export-msg", `瀏覽器不讓程式寫入剪貼簿，${sheet} ${rows.length} 筆已選取在下面，請自行複製。`, "bad");
@@ -726,6 +732,7 @@
     $("#btn-xlsx").addEventListener("click", doXlsx);
     $("#btn-fixed").addEventListener("click", () => doCopy("固定"));
     $("#btn-float").addEventListener("click", () => doCopy("浮動"));
+    $("#btn-pay").addEventListener("click", () => doCopy("繳費"));
 
     doc.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => {
       const sec = doc.getElementById(b.dataset.goto);

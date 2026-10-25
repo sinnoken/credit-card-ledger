@@ -268,7 +268,7 @@ const toAB = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
     const buf = await CC.exporter.toXlsx(rows, bad);
     assert.ok(buf instanceof ArrayBuffer);
     const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
-    assert.deepStrictEqual(wb.worksheets.map((w) => w.name), ['固定', '浮動', '核對結果']);
+    assert.deepStrictEqual(wb.worksheets.map((w) => w.name), ['固定', '浮動', '核對結果', '繳費']);
     const fx = wb.getWorksheet('固定'), fl = wb.getWorksheet('浮動'), ck = wb.getWorksheet('核對結果');
     assert.strictEqual(fx.rowCount - 1, rows.filter((r) => r.sheet === '固定').length);
     assert.strictEqual(fl.rowCount - 1, rows.filter((r) => r.sheet === '浮動').length);
@@ -324,6 +324,39 @@ const toAB = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
     assert.strictEqual(ck.getRow(3).getCell(10).value, '無需繳款');
     assert.strictEqual(ck.getRow(4).getCell(10).value, null);
     assert.strictEqual(ck.getColumn(10).width, 11);
+  });
+
+  await t('繳費: sheet and copy share columns; only owed statements, by 繳款截止日', async () => {
+    const E = CC.exporter;
+    const base = { closing: '2026-10-01', prev: 0, total: 0, expect: 0, ok: true, count: 0 };
+    const cks = [
+      { ...base, file: 'a.pdf', bank: 'tcb', cur: 300, due: '2026-10-15', card: '合庫信用卡' },
+      { ...base, file: 'b.pdf', bank: '台北富邦', cur: 1000, due: '2026-09-03', card: '台北富邦信用卡' },
+      { ...base, file: 'c.pdf', bank: 'mega', cur: 0, due: '2026-10-01' }, // 無需繳款
+      { ...base, file: 'd.pdf', bank: 'ctbc', cur: 2500, card: '中國信託信用卡' }, // no date found
+      { ...base, file: 'e.pdf', bank: 'tsb', cur: null },                   // failed statement
+    ];
+    assert.deepStrictEqual(E.payRows(cks).map((p) => [p.card, p.due, p.method, p.amount]), [
+      ['台北富邦信用卡', '2026-09-03', '台北富邦銀行', 1000],
+      ['合庫信用卡', '2026-10-15', '合庫銀行', 300],
+      ['中國信託信用卡', null, '中國信託商業銀行', 2500],
+    ]);
+    const lines = E.payTSV(cks).split('\n');
+    assert.strictEqual(lines[0], '信用卡名稱\t日期\t摘要\t繳款方式\t還款金額');
+    assert.strictEqual(lines[1], '台北富邦信用卡\t2026/9/3\t\t台北富邦銀行\t1000');
+    assert.strictEqual(lines[3], '中國信託信用卡\t\t\t中國信託商業銀行\t2500');
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(await E.toXlsx([], cks));
+    const ws = wb.getWorksheet('繳費');
+    assert.deepStrictEqual(ws.getRow(1).values.slice(1), E.PAY_HEAD);
+    assert.strictEqual(ws.rowCount, 4);
+    const r = ws.getRow(2);
+    assert.strictEqual(r.getCell(1).value, '台北富邦信用卡');
+    assert.ok(r.getCell(2).value instanceof Date); assert.strictEqual(r.getCell(2).value.toISOString().slice(0, 10), '2026-09-03');
+    assert.strictEqual(r.getCell(2).numFmt, 'yyyy/m/d');
+    assert.strictEqual(r.getCell(3).value, null);
+    assert.strictEqual(r.getCell(4).value, '台北富邦銀行');
+    assert.strictEqual(r.getCell(5).value, 1000);
+    assert.strictEqual(ws.getRow(4).getCell(2).value, null);
   });
 
   await t('toTSV: 分期數 pasted as text ="3/12"; amounts stay numeric', () => {

@@ -1,5 +1,5 @@
 /* export.js — CC.exporter (owner: agent C)
- * TSV for clipboard, xlsx (固定 / 浮動 / 核對結果) like convert_reference.py, save via downloads capability.
+ * TSV for clipboard, xlsx (固定 / 浮動 / 核對結果) like convert_reference.py plus 繳費, save via downloads capability.
  * ExcelJS is referenced lazily as globalThis.ExcelJS.
  */
 (function (g) {
@@ -15,6 +15,10 @@
   E.NO_PAY = "無需繳款";
   /** 繳款截止日 to show: NO_PAY when nothing is owed (banks print that instead of a date), else the ISO date or null. */
   E.dueOf = (cur, due) => (cur != null && cur <= 0 ? E.NO_PAY : due || null);
+  // 繳費: one row per statement that has something to pay, laid out like the user's own ledger sheet
+  E.PAY_HEAD = ["信用卡名稱", "日期", "摘要", "繳款方式", "還款金額"];
+  E.PAY_WIDTHS = [20, 11, 8, 20, 10];
+  E.PAY_BANK = { fubon: "台北富邦銀行", ctbc: "中國信託商業銀行", mega: "兆豐銀行", tsb: "台新銀行", first: "第一銀行", tcb: "合庫銀行", bot: "臺灣銀行" };
   E.NOTE = "說明：黃底＝類型是程式猜的；藍底＝摘要來自 OCR，可能有錯字；紅底＝金額核對不符。";
   E.FILL_GUESS = "FFF2CC";
   E.FILL_OCR = "DDEBF7";
@@ -25,6 +29,13 @@
   const bankName = (id) => {
     const b = CC.banks && Array.isArray(CC.banks.list) && CC.banks.list.find((x) => x.id === id);
     return (b && b.name) || BANK_NAMES[id] || id || "";
+  };
+
+  /** checks carry the bank's id or display name; resolve either to the bank entry (or null). */
+  const bankOf = (idOrName) => {
+    const list = (CC.banks && Array.isArray(CC.banks.list)) ? CC.banks.list : [];
+    const id = Object.keys(BANK_NAMES).find((k) => k === idOrName || BANK_NAMES[k] === idOrName);
+    return list.find((x) => x.id === idOrName || x.name === idOrName) || (id ? { id, card: "" } : null);
   };
 
   /** 'YYYY-MM-DD' → 'yyyy/m/d' */
@@ -78,11 +89,28 @@
     return lines.join("\n");
   };
 
+  /** checks → 繳費 rows {card, due, method, amount}: only statements with 本期應繳 > 0, by 繳款截止日 then card
+   *  (a missing date sorts last). card is the check's card name, else the bank's default card name. */
+  E.payRows = (checks) =>
+    (checks || []).filter((ck) => typeof ck.cur === "number" && ck.cur > 0).map((ck) => {
+      const b = bankOf(ck.bank);
+      return { card: ck.card || (b && b.card) || bankName(ck.bank), due: ck.due || null,
+        method: (b && E.PAY_BANK[b.id]) || bankName(ck.bank), amount: ck.cur };
+    }).sort((a, b) => (a.due || "9") < (b.due || "9") ? -1 : (a.due || "9") > (b.due || "9") ? 1 : a.card < b.card ? -1 : a.card > b.card ? 1 : 0);
+
+  /** 繳費 as TSV with the same columns as the sheet (摘要 left empty). */
+  E.payTSV = (checks) => {
+    const lines = [E.PAY_HEAD.join("\t")];
+    for (const p of E.payRows(checks))
+      lines.push([E.textCell(p.card), E.slashDate(p.due), "", E.textCell(p.method), amountCell(p.amount)].join("\t"));
+    return lines.join("\n");
+  };
+
   const fill = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb: "FF" + argb } });
 
   const resultText = (ck) => (ck.error ? (/^(需核對|不符)/.test(ck.error) ? ck.error : "錯誤：" + ck.error) : ck.ok ? "OK" : "不符，請檢查");
 
-  /** rows: OutRow[]; checks: [{file, bank, closing, prev, cur, total, expect, ok, count, error?, due?}] → ArrayBuffer */
+  /** rows: OutRow[]; checks: [{file, bank, closing, prev, cur, total, expect, ok, count, error?, due?, card?}] → ArrayBuffer */
   E.toXlsx = async (rows, checks) => {
     const X = g.ExcelJS;
     if (!X) throw new Error("Excel 元件尚未載入");
@@ -113,6 +141,14 @@
     ws.addRow([]);
     ws.addRow([E.NOTE]);
     E.CHECK_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    const wp = wb.addWorksheet("繳費");
+    wp.addRow(E.PAY_HEAD).eachCell((c) => { c.font = { bold: true }; });
+    for (const p of E.payRows(checks)) {
+      const r = wp.addRow([p.card, E.toDate(p.due), null, p.method, p.amount]);
+      r.getCell(2).numFmt = "yyyy/m/d";
+      r.getCell(5).numFmt = "#,##0";
+    }
+    E.PAY_WIDTHS.forEach((w, i) => { wp.getColumn(i + 1).width = w; });
     const buf = await wb.xlsx.writeBuffer();
     // Node returns a Buffer; normalise to an exact ArrayBuffer
     if (buf instanceof ArrayBuffer) return buf;

@@ -110,10 +110,12 @@ OutRow = { id, file, bank:bankId, sheet, date, type, desc, descRaw, card, inst, 
            guess:bool, ocr:bool, confirmed:false, crop:null }
 CC.reconcile(st) → { total, expect, ok }           // total = Σ all rows incl. payments; expect = cur - prev; |Δ|<0.01
 CC.exporter.toTSV(rows) → string                   // header 日期 消費類型 摘要 消費方式 分期數 金額; date yyyy/m/d
-CC.exporter.toXlsx(rows, checks) → Promise<ArrayBuffer>  // sheets 固定, 浮動, 核對結果 like convert.py (fills, widths, numFmt)
+CC.exporter.toXlsx(rows, checks) → Promise<ArrayBuffer>  // sheets 固定, 浮動, 核對結果 like convert.py, then 繳費 (fills, widths, numFmt)
+CC.exporter.payRows(checks) → [{card, due, method, amount}]  // statements with cur > 0, by due then card
+CC.exporter.payTSV(checks) → string                // header 信用卡名稱 日期 摘要 繳款方式 還款金額 (same columns as 繳費)
 CC.exporter.save(filename, arrayBuffer) → Promise<'saved'>   // via downloads capability; rejects {code}
 ```
-`checks` row: `{file, bank, closing, prev, cur, total, expect, ok, count, error?, due?}`. 核對結果 has one column more
+`checks` row: `{file, bank, closing, prev, cur, total, expect, ok, count, error?, due?, card?}`. 核對結果 has one column more
 than convert.py: 繳款截止日 last (`CC.exporter.dueOf(cur, due)`: 無需繳款 when cur ≤ 0, else the date or empty).
 Python ratio = difflib.SequenceMatcher(None, a, b).ratio() on norm() keys — reproduce it (Ratcliff/Obershelp
 with autojunk=false is fine for these short strings).
