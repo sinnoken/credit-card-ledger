@@ -304,6 +304,28 @@ const toAB = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
     for (let i = 2; i <= ws2.rowCount; i++) assert.ok(!ws2.getRow(i).getCell(3).fill || ws2.getRow(i).getCell(3).fill.type !== 'pattern');
   });
 
+  await t('核對結果: 繳款截止日 appended last (date / 無需繳款 / empty)', async () => {
+    const E = CC.exporter;
+    assert.strictEqual(E.dueOf(100, '2026-11-02'), '2026-11-02');
+    assert.strictEqual(E.dueOf(0, '2026-10-30'), '無需繳款');
+    assert.strictEqual(E.dueOf(-240, undefined), '無需繳款');
+    assert.strictEqual(E.dueOf(100, undefined), null);
+    assert.strictEqual(E.dueOf(null, undefined), null); // failed statement
+    const base = { bank: 'tsb', closing: '2026-10-18', prev: 0, total: 0, expect: 0, ok: true, count: 0 };
+    const buf = await E.toXlsx([], [{ ...base, file: 'a.pdf', cur: 100, due: '2026-11-02' },
+      { ...base, file: 'b.pdf', cur: -5, due: undefined }, { ...base, file: 'c.pdf', cur: 100 }]);
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
+    const ck = wb.getWorksheet('核對結果');
+    assert.strictEqual(ck.getRow(1).getCell(9).value, '輸出筆數'); // older columns stay put
+    assert.strictEqual(ck.getRow(1).getCell(10).value, '繳款截止日');
+    const d = ck.getRow(2).getCell(10);
+    assert.ok(d.value instanceof Date); assert.strictEqual(d.value.toISOString().slice(0, 10), '2026-11-02');
+    assert.strictEqual(d.numFmt, 'yyyy/m/d');
+    assert.strictEqual(ck.getRow(3).getCell(10).value, '無需繳款');
+    assert.strictEqual(ck.getRow(4).getCell(10).value, null);
+    assert.strictEqual(ck.getColumn(10).width, 11);
+  });
+
   await t('toTSV: 分期數 pasted as text ="3/12"; amounts stay numeric', () => {
     const E = CC.exporter;
     const rows = [

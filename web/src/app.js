@@ -304,7 +304,9 @@
       if (open) {
         if (f.st) {
           const rc = f.rec || {};
+          const due = CC.exporter.dueOf(f.st.cur, f.st.due);
           more += `<dl class="recon">
+            <dt>結帳日</dt><dd>${date}</dd><dt>繳款截止日</dt><dd>${due === CC.exporter.NO_PAY ? due : ymd(due)}</dd>
             <dt>上期應繳</dt><dd>${money(f.st.prev)}</dd><dt>本期應繳</dt><dd>${money(f.st.cur)}</dd>
             <dt>明細合計（含繳款）</dt><dd>${money(rc.total)}</dd><dt>應為（本期−上期）</dt><dd>${money(rc.expect)}</dd>
             <dt>原始明細</dt><dd>${f.st.rows.length} 筆</dd><dt>輸出</dt><dd>${f.count != null ? f.count + " 筆" : "—"}</dd></dl>`;
@@ -549,7 +551,7 @@
   function checks() {
     return S.files.map((f) => ({
       file: f.name, bank: f.bank ? f.bank.name : "", closing: f.st ? f.st.closing : null,
-      prev: f.st ? f.st.prev : null, cur: f.st ? f.st.cur : null,
+      prev: f.st ? f.st.prev : null, cur: f.st ? f.st.cur : null, due: f.st ? f.st.due : null,
       total: f.rec ? f.rec.total : null, expect: f.rec ? f.rec.expect : null,
       ok: fileOk(f), count: f.count || 0, // a statement warn (st.warn) is not "OK" in 核對結果
 

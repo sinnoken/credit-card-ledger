@@ -59,7 +59,8 @@ Dates are ISO strings `'YYYY-MM-DD'`. Amounts are numbers (TWD). User-facing str
 ```
 CC.banks.list: [{ id, name, card, keys:[...unique strings...], ocr:bool, parse(read) → Statement0 }]
 CC.banks.detect(read) → bank | null     // score = number of keys found in read.text; unique max wins; tie/0 → null
-Statement0 = { closing:iso, prev:number, cur:number, rows: Row0[], warn?:string }
+Statement0 = { closing:iso, prev:number, cur:number, rows: Row0[], warn?:string, due?:iso }
+// due: 繳款截止日, only when found and 7–35 days after closing; missing never fails the parse (docs/BANKS.md)
 // warn: optional, human-readable 中文 (e.g. 合庫 '合庫金額位置不一致，請人工核對'); the UI shows st.warn and treats the file as needing review
 Row0 = { date:iso|null, post:iso|null, desc:string, amount:number, last4:string,
          ocr: null | { page:num, y, x0, x1 } }   // OCR banks: desc '' and ocr = where the 說明 cell is
@@ -112,7 +113,8 @@ CC.exporter.toTSV(rows) → string                   // header 日期 消費類�
 CC.exporter.toXlsx(rows, checks) → Promise<ArrayBuffer>  // sheets 固定, 浮動, 核對結果 like convert.py (fills, widths, numFmt)
 CC.exporter.save(filename, arrayBuffer) → Promise<'saved'>   // via downloads capability; rejects {code}
 ```
-`checks` row: `{file, bank, closing, prev, cur, total, expect, ok, count, error?}`.
+`checks` row: `{file, bank, closing, prev, cur, total, expect, ok, count, error?, due?}`. 核對結果 has one column more
+than convert.py: 繳款截止日 last (`CC.exporter.dueOf(cur, due)`: 無需繳款 when cur ≤ 0, else the date or empty).
 Python ratio = difflib.SequenceMatcher(None, a, b).ratio() on norm() keys — reproduce it (Ratcliff/Obershelp
 with autojunk=false is fine for these short strings).
 

@@ -9,8 +9,12 @@
 
   E.HEAD = ["日期", "消費類型", "摘要", "消費方式", "分期數", "金額"];
   E.WIDTHS = [11, 23.5, 45, 18.4, 7.5, 8];
-  E.CHECK_HEAD = ["檔案", "銀行", "結帳日", "上期應繳", "本期應繳", "明細合計(含繳款)", "應為(本期-上期)", "結果", "輸出筆數"];
-  E.CHECK_WIDTHS = [42, 10, 11, 10, 10, 16, 16, 14, 9];
+  // 繳款截止日 is appended last so formulas pointing at the older columns keep working
+  E.CHECK_HEAD = ["檔案", "銀行", "結帳日", "上期應繳", "本期應繳", "明細合計(含繳款)", "應為(本期-上期)", "結果", "輸出筆數", "繳款截止日"];
+  E.CHECK_WIDTHS = [42, 10, 11, 10, 10, 16, 16, 14, 9, 11];
+  E.NO_PAY = "無需繳款";
+  /** 繳款截止日 to show: NO_PAY when nothing is owed (banks print that instead of a date), else the ISO date or null. */
+  E.dueOf = (cur, due) => (cur != null && cur <= 0 ? E.NO_PAY : due || null);
   E.NOTE = "說明：黃底＝類型是程式猜的；藍底＝摘要來自 OCR，可能有錯字；紅底＝金額核對不符。";
   E.FILL_GUESS = "FFF2CC";
   E.FILL_OCR = "DDEBF7";
@@ -78,7 +82,7 @@
 
   const resultText = (ck) => (ck.error ? (/^(需核對|不符)/.test(ck.error) ? ck.error : "錯誤：" + ck.error) : ck.ok ? "OK" : "不符，請檢查");
 
-  /** rows: OutRow[]; checks: [{file, bank, closing, prev, cur, total, expect, ok, count, error?}] → ArrayBuffer */
+  /** rows: OutRow[]; checks: [{file, bank, closing, prev, cur, total, expect, ok, count, error?, due?}] → ArrayBuffer */
   E.toXlsx = async (rows, checks) => {
     const X = g.ExcelJS;
     if (!X) throw new Error("Excel 元件尚未載入");
@@ -99,9 +103,11 @@
     ws.addRow(E.CHECK_HEAD).eachCell((c) => { c.font = { bold: true }; });
     for (const ck of checks || []) {
       const res = resultText(ck);
+      const due = E.dueOf(ck.cur, ck.due);
       const r = ws.addRow([ck.file || "", bankName(ck.bank), E.toDate(ck.closing), ck.prev ?? null, ck.cur ?? null,
-        ck.total ?? null, ck.expect ?? null, res, ck.count ?? 0]);
+        ck.total ?? null, ck.expect ?? null, res, ck.count ?? 0, due === E.NO_PAY ? due : E.toDate(due)]);
       r.getCell(3).numFmt = "yyyy/m/d";
+      r.getCell(10).numFmt = "yyyy/m/d";
       if (res !== "OK") for (let i = 1; i <= E.CHECK_HEAD.length; i++) r.getCell(i).fill = fill(E.FILL_BAD);
     }
     ws.addRow([]);

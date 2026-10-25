@@ -170,6 +170,52 @@ async function tcbFixtureCases() {
   st = bot.parse({ pages: [{ num: 1, items: [item('結帳日115/10/20', 20, 30, 5), ...botItems] }] });
   eq([st.closing, st.prev, st.cur], ['2026-10-20', 10, 5], 'bot synthetic');
 
+  /* ---------- 繳款截止日: per-bank synthetic layouts, 無需繳款, sanity window ---------- */
+  eq(fubon.parse({ pages: [{ num: 1, items: fubonPage1() }] }).due, '2026-04-09', 'fubon due under its label');
+  st = fubon.parse({ pages: [{ num: 1, items: fubonPage1().map((it) => (it.s === '115/04/09' ? item('無需繳款', 280, 276) : it)) }] });
+  eq([st.closing, st.due], ['2026-03-22', undefined], 'fubon 無需繳款: no due, closing unaffected');
+  const botDue = (s) => bot.parse({ pages: [{ num: 1, items: [item('結帳日115/10/20', 20, 30, 5), item(s, 200, 30, 5), ...botItems] }] }).due;
+  eq(botDue('繳款截止日(02)2182-115/11/05'), '2026-11-05', 'bot due after the phone number');
+  eq(botDue('繳款截止日(02)2182-無須繳款'), undefined, 'bot 無須繳款');
+  const tsb = CC.banks.byId('tsb');
+  const tsbItems = (due) => [item('帳單結帳日', 61, 167), item('115/10/18', 175, 167, 5), item('繳款截止日', 61, 184), item(due, 175, 184, 5),
+    item('上期應繳總額', 61, 200), item('3,087', 190, 200, 5), item('=本期累計應繳金額', 61, 220), item('4,703', 190, 220, 5)];
+  eq(tsb.parse({ pages: [{ num: 1, items: tsbItems('115/11/02') }] }).due, '2026-11-02', 'tsb due');
+  eq(tsb.parse({ pages: [{ num: 1, items: tsbItems('115/10/18') }] }).due, undefined, 'due == closing dropped');
+  eq(tsb.parse({ pages: [{ num: 1, items: tsbItems('115/10/24') }] }).due, undefined, 'due 6 days after closing dropped');
+  eq(tsb.parse({ pages: [{ num: 1, items: tsbItems('115/10/25') }] }).due, '2026-10-25', 'due 7 days after closing kept');
+  eq(tsb.parse({ pages: [{ num: 1, items: tsbItems('115/11/22') }] }).due, '2026-11-22', 'due 35 days after closing kept');
+  eq(tsb.parse({ pages: [{ num: 1, items: tsbItems('115/11/23') }] }).due, undefined, 'due 36 days after closing dropped');
+  const mega = CC.banks.byId('mega');
+  st = mega.parse({ pages: [{ num: 1, items: [item('結 帳 日 期', 273, 91), item('115/10/15', 271, 105, 5),
+    item('上期待繳總額', 112, 177), item('已 繳 金 額', 179, 177), item('本期待繳總額', 355, 177), item('繳 款 截 止 日', 474, 177),
+    ...['1,561.00', '1,561.00', '0.00', '0.00', '0.00', '0.00'].map((s, i) => item(s, 119 + 52 * i, 195, 5)), item('115/10/30', 477, 195, 5)] }] });
+  eq([st.closing, st.prev, st.cur, st.due], ['2026-10-15', 1561, 0, '2026-10-30'], 'mega due at the end of the totals row');
+  const firstDue = (dueY) => first.parse({ pages: [{ num: 1, items: [...firstItems(true), item('115/10/10', 517, 238, 5), item('115/10/25', 517, dueY, 5)] }] }).due;
+  eq(firstDue(258), '2026-10-25', 'first due right below the closing date');
+  eq(firstDue(290), undefined, 'first: a date more than 40pt below is not the due date');
+  const ctbc = CC.banks.byId('ctbc');
+  st = ctbc.parse({ pages: [{ num: 1, items: [item('115/11/05', 222, 216, 5), item('400,000', 527, 216, 5),
+    item('115/10/18', 19, 400, 5), ...['7,681', '1,717', '0', '7,681', '0', '+1,717'].map((s, i) => item(s, 111 + 80 * i, 400, 5))] }] });
+  eq([st.closing, st.cur, st.due], ['2026-10-18', 1717, '2026-11-05'], 'ctbc due on page 1');
+  const tcb = CC.banks.byId('tcb');
+  const tcbDue = (s) => tcb.parse({ pages: [
+    { num: 1, items: [item('115/10/01', 59, 250, 5), item(s, 134, 250, 5), item('315', 276, 250, 5)] },
+    { num: 2, items: [item('0', 310, 80, 5), item('115/09/20', 30, 100, 5), item('500', 300, 100, 5), item('500', 300, 120, 5), item('-----', 20, 140)] },
+  ] });
+  st = tcbDue('115?10?15?');
+  eq([st.closing, st.prev, st.cur, st.due], ['2026-10-01', 0, 500, '2026-10-15'], 'tcb due: 年月日 read as ?');
+  eq(tcbDue('315').due, undefined, 'tcb: an amount right of the closing date is not a due date');
+
+  /* ---------- 繳款截止日 on the real statements (hand-checked against paper: fixtures/expected_due.json) ---------- */
+  if (need(['pdf', 'expected_due.json'], 'banks_edge: 繳款截止日 on the real statements')) {
+    const dues = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/expected_due.json'), 'utf8'));
+    for (const [file, due] of Object.entries(dues)) {
+      const rd = await readFixture(file);
+      eq(CC.banks.detect(rd).parse(rd).due || null, due, `${file} due`);
+    }
+  }
+
   /* ---------- core.read on a synthetic swapped page: real spaces, foreign U+3000 ---------- */
   {
     const OPS = globalThis.pdfjsLib.OPS, H = 800;

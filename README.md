@@ -15,9 +15,9 @@
 
 ## 每月使用（3 步）
 
-1. **放入**：把當月所有 PDF 拖進網頁。有密碼的話輸入一次，可以輸入好幾組，程式會逐一嘗試。
+1. **放入**：把當月所有 PDF 拖進網頁。有密碼的話輸入一次，可以輸入好幾組，程式會逐一嘗試。每份帳單列出銀行、結帳日、筆數和核對結果；點開可以看到繳款截止日和金額明細。
 2. **確認**：審核表預設只列出待確認的列：黃底是類型用猜的、藍底是摘要來自 OCR、紅底是核對不符。直接在表上修改；按「套用到同摘要」，下個月同樣的摘要就會自動分類。
-3. **匯出**：「存成 Excel」下載 .xlsx（含「固定」「浮動」「核對結果」三張表），或用「複製固定／浮動」直接貼進你的活頁簿。
+3. **匯出**：「存成 Excel」下載 .xlsx（含「固定」「浮動」「核對結果」三張表，「核對結果」最後一欄是繳款截止日），或用「複製固定／浮動」直接貼進你的活頁簿。
 
 鍵盤操作：↑ ↓ 移動、Enter 確認並跳到下一筆、T 改類型、E 改摘要、空白鍵展開截圖。
 
@@ -54,7 +54,7 @@ python3 build.py                  # 產生 dist/index.html 與要一起發佈的
 ```bash
 cd web
 node test/banks.test.cjs        # 7 家銀行解析
-node test/banks_edge.test.cjs   # 合作金庫補 0、缺結帳日等邊界情況（合成資料）
+node test/banks_edge.test.cjs   # 合作金庫補 0、缺結帳日、繳款截止日等邊界情況（合成資料）
 node test/logic.test.cjs        # 分類、核對、設定匯入匯出、xlsx／TSV
 node test/ocr.test.cjs          # 瀏覽器 OCR（Playwright + Chromium）
 python3 build.py && node test/e2e.test.cjs   # 整頁流程（Playwright）
@@ -69,12 +69,13 @@ node test/pages.test.cjs        # dist/site 以一般網站方式執行（無 cl
 | `分類參考.xlsx` | 你的活頁簿（「固定」「浮動」「工作表1」） |
 | `personal-settings.json` | 你在網頁「設定 → 匯出設定 JSON」存下的個人設定（選用） |
 | `convert_reference.py` | 套用你個人卡名與規則的 Python 版（選用） |
+| `expected_due.json` | 各帳單的繳款截止日，照紙本手填，例如 `{"TSB.pdf": "2026-11-02", "FUBON.pdf": null}`（`null` 是無需繳款；選用） |
 
 然後用 `python3 scripts/make_expected.py` 產生 `expected.json`（Python 版的參考結果），JS 版必須逐筆一致。
 
 ## Python 版
 
-`python/` 是最早的命令列版本（Windows），與網頁版結果一致，也是網頁版的參考實作：
+`python/` 是最早的命令列版本（Windows），與網頁版結果一致，也是網頁版的參考實作。唯一差別是 Python 版不讀繳款截止日，「核對結果」少最後一欄：
 
 - `decrypt_pdf.ps1`：用 qpdf 批次解密，執行時才輸入密碼，不會存檔
 - `convert.py`：轉換並輸出 Excel

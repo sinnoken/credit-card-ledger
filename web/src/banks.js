@@ -4,7 +4,9 @@
  *
  * CC.banks.list   [{id, name, card, keys, ocr, parse(read) -> Statement0}]
  * CC.banks.detect(read) -> bank | null
- * Statement0 = {closing, prev, cur, rows:[{date, post, desc, amount, last4, ocr}], warn?}
+ * Statement0 = {closing, prev, cur, rows:[{date, post, desc, amount, last4, ocr}], warn?, due?}
+ * due (繳款截止日) is informational: absent when not found, never fails a parse. Banks print 無需繳款
+ * instead of a date when nothing is owed; callers derive that from cur (CC.exporter.dueOf).
  */
 (function (g) {
   "use strict";
@@ -23,12 +25,21 @@
   const row = (date, post, desc, amount, last4 = "", ocr = null) =>
     ({ date: date || post || null, post: post || null, desc: String(desc || "").trim(), amount, last4: last4 || "", ocr });
 
+  // 繳款截止日 must fall DUE_MIN..DUE_MAX days after closing (seen: 14-18). Several banks are found by
+  // position only, so anything outside the window is dropped rather than shown.
+  const DUE_MIN = 7, DUE_MAX = 35;
+  const dueOk = (closing, due) => {
+    const days = (Date.parse(due) - Date.parse(closing)) / 864e5;
+    return days >= DUE_MIN && days <= DUE_MAX;
+  };
+
   const finish = (r) => {
     if (r.prev == null || r.cur == null || !Number.isFinite(r.prev) || !Number.isFinite(r.cur))
       throw new Error("找不到上期／本期總額（可能改版）");
     if (!r.closing) throw new Error("找不到結帳日（可能改版）");
     const st = { closing: r.closing, prev: r.prev, cur: r.cur, rows: r.rows };
     if (r.warn) st.warn = r.warn;
+    if (r.due && dueOk(r.closing, r.due)) st.due = r.due;
     return st;
   };
 
@@ -36,13 +47,19 @@
   function parseFubon(read) {
     const r = { rows: [] };
     let last4 = "";
+    // the value sits under its label; the next line holds the values of every label (帳單年月, 繳款截止日 ...)
+    const under = (L, next, label) => {
+      const lab = L.segs.find((s) => nows(s.t).includes(label));
+      if (!lab) return null;
+      const near = next.segs.slice().sort((a, b) => Math.abs(a.x0 - lab.x0) - Math.abs(b.x0 - lab.x0))[0];
+      return near ? U.roc(near.t) : null; // 無需繳款 -> null
+    };
     for (const pg of read.pages) {
       const lines = pageLines(pg);
       lines.forEach((L, i) => {
         const tc = nows(L.text);
         // first match only: later pages repeat 帳單結帳日 in notes (sometimes next to other dates)
         if (!r.closing && tc.includes("帳單結帳日") && lines[i + 1]) {
-          // the date sits under its label (the next line also holds 帳單年月 / 繳款截止日 ...)
           const lab = L.segs.find((s) => nows(s.t).includes("帳單結帳日"));
           const ds = lines[i + 1].segs.filter((s) => U.roc(s.t));
           if (ds.length) {
@@ -50,6 +67,7 @@
             ds.sort((a, b) => Math.abs(a.x0 - lx) - Math.abs(b.x0 - lx));
             r.closing = U.roc(ds[0].t);
           }
+          r.due = under(L, lines[i + 1], "繳款截止日");
         }
         if (r.prev == null && tc.includes("繳(退)金額") && lines[i + 1]) {
           const nums = lines[i + 1].segs.filter((s) => U.isNum(s.t)).map((s) => U.toNum(s.t));
@@ -72,6 +90,11 @@
   /* ------------------------------ 中國信託 (OCR) ------------------------------ */
   function parseCtbc(read) {
     const r = { rows: [] };
+    // 繳款截止日：第 1 頁 x 180–300 的完整日期（標籤是讀不到的中文字型）
+    for (const L of pageLines(read.pages[0])) {
+      const d = firstRoc(segsIn(L, 180, 300));
+      if (d) { r.due = d; break; }
+    }
     for (const pg of read.pages) {
       for (const L of pageLines(pg)) {
         const segs = L.segs;
@@ -110,6 +133,9 @@
         if (tc.includes("上期待繳總額") && tc.includes("已繳金額") && lines[i + 1]) {
           const nums = lines[i + 1].segs.filter((s) => U.isNum(s.t)).map((s) => U.toNum(s.t));
           if (nums.length >= 5) { r.prev = nums[0]; r.cur = nums[4]; }
+          // the same header ends with 繳款截止日; its value is the last cell below
+          const ns = lines[i + 1].segs;
+          if (tc.includes("繳款截止日") && ns.length) r.due = U.roc(ns[ns.length - 1].t);
         }
         let m = /\d{4}-\w{4}-\w{4}-(\d{4})/.exec(L.text);
         if (m) last4 = m[1];
@@ -136,6 +162,7 @@
         const tc = nows(L.text), segs = L.segs;
         const lastT = segs.length ? segs[segs.length - 1].t : "";
         if (tc.startsWith("帳單結帳日")) r.closing = U.roc(lastT) || r.closing;
+        if (tc.startsWith("繳款截止日")) r.due = U.roc(lastT) || r.due;
         if (tc.startsWith("上期應繳總額") && U.isNum(lastT)) r.prev = U.toNum(lastT);
         if (tc.startsWith("=本期累計應繳金額") && U.isNum(lastT)) r.cur = U.toNum(lastT);
         const m = /卡號末四碼[:：]\s*(\d{4})/.exec(U.nfkc(L.text));
@@ -182,6 +209,12 @@
     }
     for (const [d1, d2, desc, a, c] of pending)
       r.rows.push(row(d1 ? U.mdDate(d1, r.closing) : null, d2 ? U.mdDate(d2, r.closing) : null, desc, a, c));
+    // 繳款截止日：第 1 頁右欄沒有標籤文字，結帳日下方 40pt 內的下一個日期
+    if (r.closing) {
+      const col = pageLines(read.pages[0]).map((L) => ({ y: L.y, d: firstRoc(segsIn(L, 500, 600)) })).filter((x) => x.d);
+      const at = col.findIndex((x) => x.d === r.closing);
+      if (at >= 0 && col[at + 1] && col[at + 1].y - col[at].y <= 40) r.due = col[at + 1].d;
+    }
     return finish(r);
   }
 
@@ -206,7 +239,14 @@
     // 結帳日：第 1 頁第一個日期
     for (const L of pageLines(read.pages[0], opts)) {
       const d = firstRoc(L.segs);
-      if (d) { r.closing = d; break; }
+      if (d) {
+        r.closing = d;
+        // 繳款截止日：同一行右邊印成 '115?10?15?'（年月日是 '?'），tcbKeep 會濾掉，所以看原始 items
+        const x1 = L.segs.find((s) => U.roc(s.t) === d).x1;
+        const it = read.pages[0].items.find((it) => Math.abs(it.y - L.y) <= opts.ytol && it.x >= x1 && U.roc(it.s.replace(/\?$/, "")));
+        if (it) r.due = U.roc(it.s.replace(/\?$/, ""));
+        break;
+      }
     }
     let detail = false, lone = null, glyphs = true;
     const edges = [];
@@ -265,6 +305,9 @@
       lines.forEach((L, i) => {
         const m = /結\s*帳\s*日\s*(\d{3}\/\d{2}\/\d{2})/.exec(L.text);
         if (m && !r.closing) r.closing = U.roc(m[1]);
+        // 繳款截止日 shares the line, after the phone number; 無須繳款 instead of a date when nothing is owed
+        const dm = /繳\s*款\s*截\s*止\s*日.*?(\d{3}\/\d{2}\/\d{2})/.exec(L.text);
+        if (dm && !r.due) r.due = U.roc(dm[1]);
         if (nows(L.text).includes("前期應繳總金額")) {
           for (const L2 of lines.slice(i + 1, i + 5)) {
             const nums = L2.segs.filter((s) => U.isNum(s.t)).map((s) => U.toNum(s.t));
