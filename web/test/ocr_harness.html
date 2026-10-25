@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>ocr harness</title></head>
+<body>
+<p id="status">loading</p>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.min.js"></script>
+<script src="../src/core.js"></script>
+<script src="../src/ocr.js"></script>
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "pdf.worker.min.js";
+  // Test helper: find transaction rows (ROC date at left + amount) and return OCR requests.
+  window.findRows = async (url, cfg) => {
+    const buf = await (await fetch(url)).arrayBuffer();
+    const { doc } = await CC.pdf.open(buf, []);
+    const rd = await CC.pdf.read(doc);
+    const out = [];
+    for (const pg of rd.pages) {
+      const reqs = [], meta = [];
+      for (const L of CC.pdf.lines(pg.items)) {
+        const nums = L.segs.filter((s) => CC.util.isNum(s.t)).length;
+        if (nums >= 5) continue;
+        const dates = L.segs.filter((s) => CC.util.roc(s.t) && s.x0 >= cfg.date[0] && s.x0 < cfg.date[1]);
+        const amts = L.segs.filter((s) => CC.util.isNum(s.t) && s.x0 >= cfg.amt[0] && s.x0 < cfg.amt[1]);
+        if (!dates.length || !amts.length) continue;
+        reqs.push({ y: L.y, x0: cfg.desc[0], x1: cfg.desc[1] });
+        meta.push({ date: CC.util.roc(dates[0].t), amount: CC.util.toNum(amts[amts.length - 1].t) });
+      }
+      if (reqs.length) out.push({ page: pg.page, reqs, meta });
+    }
+    return out;
+  };
+  document.getElementById("status").textContent = "ready";
+</script>
+</body></html>

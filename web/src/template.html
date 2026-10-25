@@ -1,0 +1,208 @@
+<title>帳單轉帳本</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap">
+<style>/*__CSS__*/</style>
+
+<div id="app" data-busy="0">
+  <header class="top">
+    <div class="top-in">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">帳</span>
+        <div>
+          <h1>帳單轉帳本</h1>
+          <p class="brand-sub">信用卡 PDF 帳單 → 活頁簿「固定」「浮動」</p>
+        </div>
+      </div>
+      <ol class="steps" id="steps" aria-label="進度">
+        <li data-step="1"><button type="button" data-goto="s1"><span class="n">1</span>放入</button></li>
+        <li data-step="2"><button type="button" data-goto="s2"><span class="n">2</span>確認</button></li>
+        <li data-step="3"><button type="button" data-goto="s3"><span class="n">3</span>匯出</button></li>
+      </ol>
+      <button type="button" class="btn" id="btn-settings" aria-haspopup="dialog">設定</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- 1 放入 -->
+    <section class="step" id="s1" aria-labelledby="s1-h">
+      <div class="step-head">
+        <span class="step-n" aria-hidden="true">1</span>
+        <h2 id="s1-h">放入帳單</h2>
+        <p class="step-status" id="file-summary" aria-live="polite">尚未放入</p>
+      </div>
+
+      <div class="intake">
+        <label class="drop" id="drop" for="file-input">
+          <input type="file" id="file-input" accept="application/pdf,.pdf" multiple>
+          <span class="drop-title">把這個月的帳單 PDF 拖到這裡</span>
+          <span class="drop-sub">或點這裡選檔，可以一次選多份。放入後會自動開始讀取。</span>
+          <span class="drop-banks" id="drop-banks"></span>
+        </label>
+
+        <div class="pw">
+          <label class="lbl" for="pw-input">帳單密碼</label>
+          <div class="pw-box" id="pw-box">
+            <ul class="chips" id="pw-chips" aria-label="已輸入的密碼"></ul>
+            <input type="password" id="pw-input" autocomplete="off" placeholder="輸入後按 Enter，可加好幾組">
+          </div>
+          <p class="hint">每家銀行密碼不同時，全部加進來；程式會逐一嘗試。密碼只留在這個分頁的記憶體，不會存檔也不會上傳。</p>
+        </div>
+      </div>
+
+      <p class="note" id="ocr-msg" hidden></p>
+
+      <div class="files" id="files">
+        <div class="empty" id="files-empty">
+          <p>還沒有帳單。放入後每份 PDF 會在這裡列一行：銀行、結帳日、筆數，以及核對結果。</p>
+          <p class="sub">核對方式：明細合計（含繳款）必須等於「本期應繳 − 上期應繳」，相符才算通過。</p>
+        </div>
+        <ul class="file-list" id="file-list"></ul>
+      </div>
+    </section>
+
+    <!-- 2 確認 -->
+    <section class="step" id="s2" aria-labelledby="s2-h">
+      <div class="step-head">
+        <span class="step-n" aria-hidden="true">2</span>
+        <h2 id="s2-h">確認明細</h2>
+        <p class="step-status" id="review-summary" aria-live="polite">
+          共 <b id="count-total">0</b> 筆 · 固定 <b id="count-fixed">0</b> · 浮動 <b id="count-float">0</b>
+        </p>
+      </div>
+
+      <div class="legend" aria-label="顏色說明">
+        <span class="lg lg-guess">類型是猜的</span>
+        <span class="lg lg-ocr">摘要來自 OCR</span>
+        <span class="lg lg-bad">帳單核對不符</span>
+        <span class="lg-note">確認或修改過的列不再上色。</span>
+      </div>
+
+      <div class="review-bar" id="review-bar" hidden>
+        <div class="filter" id="filter" role="group" aria-label="篩選"></div>
+        <p class="keys" aria-label="快捷鍵">
+          <kbd>↑</kbd><kbd>↓</kbd> 移動 <kbd>Enter</kbd> 確認並跳下一筆 <kbd>T</kbd> 改類型 <kbd>E</kbd> 改摘要 <kbd>空白</kbd> 展開
+        </p>
+      </div>
+
+      <div class="empty" id="review-empty">
+        <p>放入帳單後，需要你看一眼的列會出現在這裡：程式猜的類型、OCR 讀出來的摘要、核對不符的帳單。</p>
+        <p class="sub">點類型或摘要就能修改；改了類型會自動換到「固定」或「浮動」工作表。</p>
+      </div>
+      <div class="empty done" id="review-done" hidden>
+        <p>全部核對通過，沒有要確認的</p>
+        <p class="sub">切到「全部」可以再看一次每一筆。</p>
+      </div>
+
+      <div class="table-wrap" id="review-wrap" tabindex="0" aria-label="明細表，用方向鍵移動" hidden>
+        <table class="ledger" id="review">
+          <thead>
+            <tr>
+              <th class="c-x" scope="col"><span class="sr">展開</span></th>
+              <th class="c-date" scope="col">日期</th>
+              <th class="c-type" scope="col">消費類型</th>
+              <th class="c-desc" scope="col">摘要</th>
+              <th class="c-card" scope="col">消費方式</th>
+              <th class="c-inst" scope="col">分期數</th>
+              <th class="c-amt" scope="col">金額</th>
+              <th class="c-sheet" scope="col">工作表</th>
+              <th class="c-src" scope="col">來源</th>
+              <th class="c-ok" scope="col"><span class="sr">確認</span></th>
+            </tr>
+          </thead>
+          <tbody id="review-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3 匯出 -->
+    <section class="step" id="s3" aria-labelledby="s3-h">
+      <div class="step-head">
+        <span class="step-n" aria-hidden="true">3</span>
+        <h2 id="s3-h">匯出</h2>
+        <p class="step-status" id="export-summary">等明細出來</p>
+      </div>
+
+      <div class="export">
+        <div class="export-main">
+          <div class="actions">
+            <button type="button" class="btn primary" id="btn-xlsx" disabled>存成 Excel</button>
+            <button type="button" class="btn" id="btn-fixed" disabled>複製固定</button>
+            <button type="button" class="btn" id="btn-float" disabled>複製浮動</button>
+          </div>
+          <p class="hint" id="export-hint">Excel 檔含「固定」「浮動」「核對結果」三張工作表。複製的內容含標題列，可直接貼到活頁簿。</p>
+          <p class="note" id="export-msg" role="status" hidden></p>
+          <div class="tsv" id="tsv-box" hidden>
+            <label class="lbl" for="tsv-text">無法自動複製，請按 Ctrl+C（或 ⌘C）複製下面已選取的內容</label>
+            <textarea id="tsv-text" rows="6" readonly spellcheck="false"></textarea>
+          </div>
+        </div>
+        <aside class="gate" id="gate" hidden aria-labelledby="gate-h">
+          <h3 id="gate-h">匯出前請注意</h3>
+          <ul id="gate-list"></ul>
+          <label class="check"><input type="checkbox" id="gate-ack"> 我知道，仍要匯出</label>
+        </aside>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <p>全部在這個瀏覽器分頁裡處理：PDF、密碼和明細都不會離開你的電腦。設定（卡名、學到的分類）只存在這個瀏覽器。</p>
+    </footer>
+  </main>
+
+  <!-- 設定 -->
+  <dialog class="drawer" id="settings" aria-labelledby="set-h">
+    <div class="drawer-in" id="settings-form">
+      <div class="drawer-head">
+        <h2 id="set-h">設定</h2>
+        <button type="button" class="btn ghost" id="set-close">關閉</button>
+      </div>
+
+      <fieldset class="grp">
+        <legend>日期欄用哪一天</legend>
+        <div class="radios" id="set-date">
+          <label><input type="radio" name="dateMode" id="dm-bill" value="帳單日"> 帳單日<small>（結帳日，同一份帳單同一天）</small></label>
+          <label><input type="radio" name="dateMode" id="dm-buy" value="消費日"> 消費日</label>
+          <label><input type="radio" name="dateMode" id="dm-post" value="入帳日"> 入帳日</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="grp">
+        <legend>匯入分類參考（活頁簿 .xlsx）</legend>
+        <p class="hint">選你平常記帳的活頁簿，程式會讀「固定」「浮動」兩張工作表的 B 欄類型、C 欄摘要，之後同樣的摘要就照你的分法。</p>
+        <input type="file" id="set-workbook" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <p class="note" id="set-wb-msg" role="status" hidden></p>
+      </fieldset>
+
+      <fieldset class="grp">
+        <legend>卡片名稱與預設類型</legend>
+        <p class="hint">「消費方式」欄會填卡片名稱；對不到規則時用預設類型（會標黃）。</p>
+        <div class="card-wrap">
+          <table class="cards">
+            <thead><tr><th scope="col">銀行</th><th scope="col">消費方式</th><th scope="col">預設類型</th></tr></thead>
+            <tbody id="card-body"></tbody>
+          </table>
+        </div>
+      </fieldset>
+
+      <fieldset class="grp">
+        <legend>備份設定</legend>
+        <div class="actions">
+          <button type="button" class="btn" id="set-export">匯出設定 JSON</button>
+          <label class="btn file-btn" for="set-import">匯入設定 JSON<input type="file" id="set-import" accept=".json,application/json"></label>
+        </div>
+        <p class="note" id="set-msg" role="status" hidden></p>
+      </fieldset>
+
+      <p class="learned" id="learned-count"></p>
+    </div>
+  </dialog>
+
+  <div class="pop" id="type-pop" role="listbox" aria-label="消費類型" hidden></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script>/*__JS__*/</script>
