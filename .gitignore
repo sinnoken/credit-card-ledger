@@ -1,0 +1,30 @@
+# ---- Private data: never commit ----
+# Real statements, the user's workbook, personal settings and anything derived from them
+*.pdf
+*.xlsx
+*.xls
+web/test/fixtures/*
+!web/test/fixtures/.gitkeep
+personal-settings*.json
+cc-settings*.json
+python/decrypted/
+python/output/
+python/分類參考.xlsx
+python/活頁簿*.xlsx
+# Test screenshots show real statement rows
+web/test/out/
+
+# ---- Generated / downloaded ----
+web/vendor/
+web/dist/
+node_modules/
+__pycache__/
+*.pyc
+*.tgz
+*.whl
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
