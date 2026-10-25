@@ -781,7 +781,9 @@
   /* ------------------------------ boot ------------------------------ */
   function boot() {
     bind(); renderBanks(); renderPw(); renderAll(); renderSettings();
-    Promise.resolve().then(() => g.claude && g.claude.use ? g.claude.use("downloads") : null)
+    // inside a claude.ai Artifact saving goes through the downloads capability; on an ordinary web host
+    // (e.g. GitHub Pages) there is no window.claude and the browser's own download is used instead
+    Promise.resolve().then(() => g.claude && g.claude.use ? g.claude.use("downloads") : "browser")
       .then((d) => d || null, () => null)
       .then((d) => { S.dl = d; renderExport(); renderSettings(); });
   }

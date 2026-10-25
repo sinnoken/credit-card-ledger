@@ -115,10 +115,22 @@
 
   /** Save through the downloads capability. Resolves its status ('saved'); rejects {code} as given. */
   E.save = async (filename, buf, type = E.MIME) => {
-    const dl = await g.claude?.use?.("downloads");
+    if (!(g.claude && g.claude.use)) return E.browserSave(filename, buf, type); // ordinary web host
+    const dl = await g.claude.use("downloads");
     if (!dl) throw { code: "unavailable", message: "此環境無法存檔" };
     const r = await dl.save({ filename, data: new Blob([buf], { type }) });
     if (typeof r === "string") return r;
     return (r && r.status) || "saved";
+  };
+  /** Plain browser download (outside claude.ai): a temporary object URL on an <a download>. */
+  E.browserSave = (filename, buf, type = E.MIME) => {
+    const doc = g.document;
+    if (!doc || !g.URL || !g.URL.createObjectURL) return Promise.reject({ code: "unavailable", message: "此環境無法存檔" });
+    const url = g.URL.createObjectURL(new Blob([buf], { type }));
+    const a = doc.createElement("a");
+    a.href = url; a.download = filename; a.rel = "noopener"; a.style.display = "none";
+    doc.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => g.URL.revokeObjectURL(url), 30000);
+    return Promise.resolve("saved");
   };
 })(globalThis);
