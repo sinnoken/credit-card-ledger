@@ -303,12 +303,17 @@
   const unTSV = (s) => (/^'(?=[\s=+\-@])/.test(s) ? s.slice(1) : s);
   S.unTSV = unTSV;
 
+  /** The program's sheet names and the names the same sheets carry in the user's ledger workbook. */
+  S.LEDGER_SHEETS = Object.freeze({ 固定: "Spend2", 浮動: "Spend1", 收入: "Incomes", 轉帳: "Bank" });
+  /** 「固定（Spend2）」: how a sheet is named to the user. */
+  S.sheetLabel = (sheet) => (hasOwn(S.LEDGER_SHEETS, sheet) ? `${sheet}（${S.LEDGER_SHEETS[sheet]}）` : sheet);
+
   /**
-   * Learn 摘要 → 類型 from the user's workbook (sheets 固定 (or Spend2), 浮動, and 收入 (or Incomes) for payslip
-   * earnings: col B 類型, col C 摘要; 轉帳 (or Bank): col C 摘要, col E 轉入銀行 — a payslip deduction moved to another
-   * account), like load_history().
+   * Learn 摘要 → 類型 from the user's workbook, each sheet under its own or its ledger name (LEDGER_SHEETS):
+   * 固定 / 浮動 / 收入 (payslip earnings): col B 類型, col C 摘要; 轉帳: col C 摘要, col E 轉入銀行 (a payslip deduction
+   * moved to another account). Like load_history().
    * Resolves {learned, count, conflicts, fixedTypes, incomeTypes, bankTargets}. Later rows win, sheets read in the
-   * order above (轉帳 / Bank last); a key seen with two types gets conflict:true (yellow until 套用到同摘要).
+   * order above (轉帳 last); a key seen with two types gets conflict:true (yellow until 套用到同摘要).
    */
   S.importWorkbook = async (arrayBuffer) => {
     const X = g.ExcelJS;
@@ -317,11 +322,11 @@
     try { await wb.xlsx.load(arrayBuffer); } catch (e) { throw new Error("無法讀取 Excel 檔：" + (e && e.message || e)); }
     const hist = {}, conflict = new Set(), fixed = new Set(FIXED_TYPES), income = new Set(), bank = new Set();
     let found = false;
-    for (const name of ["固定", "Spend2", "浮動", "收入", "Incomes", "轉帳", "Bank"]) {
+    for (const [role, alias] of Object.entries(S.LEDGER_SHEETS)) for (const name of [role, alias]) {
       const ws = wb.getWorksheet(name);
       if (!ws) continue;
       found = true;
-      const transfer = name === "轉帳" || name === "Bank", typeCol = transfer ? 5 : 2;
+      const transfer = role === "轉帳", typeCol = transfer ? 5 : 2;
       for (let r = 2; r <= ws.rowCount; r++) {
         const row = ws.getRow(r);
         const t = cellVal(row.getCell(typeCol).value), d = cellVal(row.getCell(3).value);
@@ -329,12 +334,12 @@
         const type = unTSV(pyStr(t)), desc = unTSV(pyStr(d)), k = norm(desc);
         if (hasOwn(hist, k) && hist[k].type !== type) conflict.add(k);
         put(hist, k, { desc, type });
-        if (name === "固定" || name === "Spend2") fixed.add(type);
-        else if (name === "收入" || name === "Incomes") income.add(type);
+        if (role === "固定") fixed.add(type);
+        else if (role === "收入") income.add(type);
         else if (transfer) bank.add(type);
       }
     }
-    if (!found) throw new Error("活頁簿裡找不到「固定」「浮動」「收入」或「轉帳」工作表");
+    if (!found) throw new Error("活頁簿裡找不到" + Object.keys(S.LEDGER_SHEETS).map((n) => `「${S.sheetLabel(n)}」`).join("") + "任何一張工作表");
     for (const k of conflict) hist[k].conflict = true;
     return { learned: hist, count: Object.keys(hist).length, conflicts: conflict.size, fixedTypes: Array.from(fixed),
       incomeTypes: Array.from(income), bankTargets: Array.from(bank) };

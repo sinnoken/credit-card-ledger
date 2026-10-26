@@ -24,6 +24,7 @@
     files: [],              // {id,name,size,buf,status,bank,st,rec,read,doc,ocrInfo,count,error,ocrNote}
     rows: [],               // OutRow + {fid, idx, user, excluded, ocrText, ocrClean}
     filter: "pending",
+    sort: null,             // {key, dir: 1|-1} from a review-table header click; null = file order
     cursor: null,
     open: new Set(),        // expanded row ids
     openFiles: new Set(),
@@ -60,11 +61,31 @@
   const errMsg = (e) => (e && (e.message || e.code)) || String(e);
   function saveSettings() { try { CC.settings.save(S.settings); } catch (e) { /* storage blocked: keep in memory */ } }
 
+  /* review-table sort: header click cycles ascending → descending → file order (S.sort = null) */
+  const collator = new Intl.Collator("zh-Hant", { numeric: true });
+  const SORT_KEYS = {
+    date: (r) => r.date || "", type: (r) => r.type, desc: (r) => r.desc, card: (r) => r.card, inst: (r) => r.inst || "",
+    amt: (r) => r.amount, sheet: (r) => r.sheet, src: (r) => { const f = fileOf(r); return f && f.bank ? f.bank.name : r.file; },
+  };
+  /** Rows in display order: stable, so ties keep file order. */
+  function sorted(list) {
+    const s = S.sort; if (!s || !SORT_KEYS[s.key]) return list;
+    const key = SORT_KEYS[s.key], num = s.key === "amt";
+    return list.map((r, i) => [r, key(r), i])
+      .sort((a, b) => (num ? (a[1] || 0) - (b[1] || 0) : collator.compare(String(a[1] ?? ""), String(b[1] ?? ""))) * s.dir || a[2] - b[2])
+      .map((x) => x[0]);
+  }
+  function setSort(key) {
+    const s = S.sort;
+    S.sort = !s || s.key !== key ? { key, dir: 1 } : s.dir === 1 ? { key, dir: -1 } : null;
+    renderReview();
+  }
+
   function visibleRows() {
     const f = S.filter;
-    if (f === "pending") return S.rows.filter(isPending);
-    if (f === "all") return S.rows;
-    return S.rows.filter((r) => r.card === f);
+    if (f === "pending") return sorted(S.rows.filter(isPending));
+    if (f === "all") return sorted(S.rows);
+    return sorted(S.rows.filter((r) => r.card === f));
   }
 
   /* ------------------------------ pipeline ------------------------------ */
@@ -254,8 +275,8 @@
 
   /* ------------------------------ actions ------------------------------ */
   function nextPendingAfter(id) {
-    const i = S.rows.findIndex((r) => r.id === id);
-    for (let k = 1; k <= S.rows.length; k++) { const r = S.rows[(i + k) % S.rows.length]; if (r && r.id !== id && isPending(r)) return r.id; }
+    const rows = sorted(S.rows), i = rows.findIndex((r) => r.id === id); // follow the order on screen
+    for (let k = 1; k <= rows.length; k++) { const r = rows[(i + k) % rows.length]; if (r && r.id !== id && isPending(r)) return r.id; }
     return null;
   }
   function neighbourInView(id) {
@@ -455,6 +476,12 @@
     $("#review-wrap").hidden = !has || v.length === 0;
     if (!v.some((r) => r.id === S.cursor)) S.cursor = v.length ? v[0].id : null;
     renderFilter(); renderFlash();
+    doc.querySelectorAll("#review thead [data-sort]").forEach((b) => {
+      const on = S.sort && S.sort.key === b.dataset.sort;
+      // only the sorted column carries aria-sort (a "none" on every header is read out as "not sorted" each time)
+      if (on) b.parentElement.setAttribute("aria-sort", S.sort.dir === 1 ? "ascending" : "descending");
+      else b.parentElement.removeAttribute("aria-sort");
+    });
     $("#review-body").innerHTML = v.map(rowHtml).join("");
     renderExport(); renderSteps();
   }
@@ -639,7 +666,7 @@
     try {
       const p = g.navigator.clipboard && g.navigator.clipboard.writeText(tsv);
       if (!p) return fallback();
-      p.then(() => { box.hidden = true; S.exported = true; msg("#export-msg", `已複製${sheet} ${rows.length} 筆（含標題列），貼到活頁簿「${sheet}」工作表。`, "ok"); renderSteps(); }, fallback);
+      p.then(() => { box.hidden = true; S.exported = true; msg("#export-msg", `已複製${sheet} ${rows.length} 筆（含標題列），貼到活頁簿「${CC.settings.sheetLabel(sheet)}」工作表。`, "ok"); renderSteps(); }, fallback);
     } catch (e) { fallback(); }
   }
 
@@ -723,6 +750,14 @@
       if (i && e.key === "Enter") { e.preventDefault(); retry(S.files.find((x) => x.id === i.dataset.retryPw), i.value.trim()); }
     });
 
+    $("#review").querySelector("thead").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-sort]"); if (!b) return;
+      // the type picker only closes 120 ms after blur: close it now (an unpicked type changes nothing)
+      if (S.edit && S.edit.field === "type") endEdit(false);
+      if (S.edit) return;
+      clearFlash(); setSort(b.dataset.sort);
+      if (e.detail) focusTable(); // a mouse click: keep the arrow keys / T / E on the rows (keyboard users stay on the header)
+    });
     $("#filter").addEventListener("click", (e) => {
       const b = e.target.closest("[data-filter]"); if (!b) return;
       S.flash = null;
@@ -758,7 +793,7 @@
     });
 
     $("#review-wrap").addEventListener("keydown", (e) => {
-      if (S.edit || e.target.closest("input,textarea,select")) return;
+      if (S.edit || e.target.closest("input,textarea,select,thead")) return; // Enter on a sort header only sorts
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       const v = visibleRows(); if (!v.length) return;
       const i = Math.max(0, v.findIndex((r) => r.id === S.cursor)), k = e.key;

@@ -103,9 +103,13 @@ CC.settings.DEFAULTS = { version:1, dateMode:'帳單日'|'消費日'|'入帳日'
                                                                // generic rules only; types from 工作表1
 CC.settings.load() / save(s)                     // localStorage 'cc-settings-v1', try/catch, merge with DEFAULTS
 CC.settings.exportJSON(s) → string ; importJSON(str, current?) → settings (validated) | throws Error(中文)
-  // with current: learned is MERGED into current.learned (incoming manual wins; incoming workbook never replaces manual; other keys kept); fields present in the import replace, absent fields come from current
-CC.settings.importWorkbook(arrayBuffer) → Promise<{learned, count, conflicts, fixedTypes, incomeTypes, bankTargets}>   // ExcelJS; sheets 固定 + Spend2 (read as 固定) / 浮動 (+ 收入, or the older name Incomes; 轉帳, or the older name Bank), col B 類型, col C 摘要;
+  // with current: learned is MERGED into current.learned (incoming manual wins; incoming workbook never replaces manual; other keys kept); fields present in the import replace, absent fields come from current;
+  //   cards merge per bank and field; fixedTypes / incomeTypes / bankTargets in current still used by a merged learned entry are kept
+  // export = whole settings object (FIELDS + learned + version); no passwords, files, row edits, 已確認, sort or filter
+CC.settings.importWorkbook(arrayBuffer) → Promise<{learned, count, conflicts, fixedTypes, incomeTypes, bankTargets}>   // ExcelJS; sheets by program or ledger name (S.LEDGER_SHEETS: 固定 Spend2, 浮動 Spend1, 收入 Incomes, 轉帳 Bank), col B 類型, col C 摘要;
                                                  //   轉帳: col C 摘要 → col E 轉入銀行 (learned like a type, collected into bankTargets)
+CC.settings.LEDGER_SHEETS = { 固定:'Spend2', 浮動:'Spend1', 收入:'Incomes', 轉帳:'Bank' }   // program sheet → ledger sheet name (frozen)
+CC.settings.sheetLabel(sheet) → '固定（Spend2）'  // how a sheet is named to the user (copy message, import error); other names unchanged
 CC.settings.learn(s, desc, type) → s             // the "套用到同摘要" action; writes src:'manual'
 CC.settings.applyWorkbook(s, res) → s            // adds res.learned as src:'workbook'; never overwrites a src:'manual' entry;
                                                  //   unions res.fixedTypes / incomeTypes / bankTargets into s
@@ -165,6 +169,11 @@ Pipeline per file: open (passwords) → read → detect → parse → reconcile 
 then for OCR banks: ensure model → recognize → cleanup → fixOcr → classify → update rows.
 One failing file never blocks others. Review table defaults to 待確認 (guess || ocr || statement not ok) and supports
 inline edit of 類型 (from fixed+floating types; payslip rows see payslip.js) and 摘要, confirm (Enter), 套用到同摘要, keyboard ↑↓/Enter/T/E/Space.
+Sort: header `<button data-sort=date|type|desc|card|inst|amt|sheet|src>` cycles S.sort {key, dir:1} ▲ → {key, dir:-1} ▼ → null (file order);
+  sorted(list) is stable (ties keep file order), Intl.Collator('zh-Hant', {numeric:true}) for text, numeric for amt; visibleRows() =
+  sorted(filter), so ↑↓ and nextPendingAfter (Enter) follow the screen; th gets aria-sort ascending|descending|none; not persisted;
+  ignored while editing; Enter on a header only sorts.
+Copy message names the target sheet with CC.settings.sheetLabel (「固定（Spend2）」). Drawer group 從帳本學分類 = importWorkbook.
 Export: 存成 Excel (downloads capability), 複製固定 / 複製浮動 / 複製繳費 / 複製收入 / 複製轉帳 (TSV to clipboard), gate when any statement not ok.
 
 ## Tests every module must pass before reporting done

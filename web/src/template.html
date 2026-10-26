@@ -55,7 +55,7 @@
           <label class="lbl" for="slip-text">從信件或薪資網頁複製整份薪資單，貼在這裡</label>
           <textarea id="slip-text" rows="5" spellcheck="false" autocomplete="off"></textarea>
           <div class="actions"><button type="button" class="btn sm" id="slip-add">加入薪資單</button></div>
-          <p class="hint">收入項目會進「收入」，扣項記成固定支出（轉到其他帳戶的提存記到「轉帳」）；內文只留在這個分頁的記憶體，加入後就清掉。</p>
+          <p class="hint">收入項目會進「收入（Incomes）」，扣項記成支出（固定或浮動；轉到其他帳戶的提存記到「轉帳（Bank）」）；內文只留在這個分頁的記憶體，加入後就清掉。</p>
         </details>
       </div>
 
@@ -108,14 +108,14 @@
           <thead>
             <tr>
               <th class="c-x" scope="col"><span class="sr">展開</span></th>
-              <th class="c-date" scope="col">日期</th>
-              <th class="c-type" scope="col">消費類型</th>
-              <th class="c-desc" scope="col">摘要</th>
-              <th class="c-card" scope="col">消費方式</th>
-              <th class="c-inst" scope="col">分期數</th>
-              <th class="c-amt" scope="col">金額</th>
-              <th class="c-sheet" scope="col">工作表</th>
-              <th class="c-src" scope="col">來源</th>
+              <th class="c-date" scope="col"><button type="button" class="sort" data-sort="date">日期</button></th>
+              <th class="c-type" scope="col"><button type="button" class="sort" data-sort="type">消費類型</button></th>
+              <th class="c-desc" scope="col"><button type="button" class="sort" data-sort="desc">摘要</button></th>
+              <th class="c-card" scope="col"><button type="button" class="sort" data-sort="card">消費方式</button></th>
+              <th class="c-inst" scope="col"><button type="button" class="sort" data-sort="inst">分期數</button></th>
+              <th class="c-amt" scope="col"><button type="button" class="sort" data-sort="amt">金額</button></th>
+              <th class="c-sheet" scope="col"><button type="button" class="sort" data-sort="sheet">工作表</button></th>
+              <th class="c-src" scope="col"><button type="button" class="sort" data-sort="src">來源</button></th>
               <th class="c-ok" scope="col"><span class="sr">確認</span></th>
             </tr>
           </thead>
@@ -180,8 +180,14 @@
       </fieldset>
 
       <fieldset class="grp">
-        <legend>匯入分類參考（活頁簿 .xlsx）</legend>
-        <p class="hint">選你平常記帳的活頁簿，程式會讀「固定」（或「Spend2」）「浮動」「收入」（或「Incomes」）工作表的 B 欄類型、C 欄摘要，以及「轉帳」（或「Bank」）工作表的轉入銀行，之後同樣的摘要（包括薪資項目）就照你的分法。</p>
+        <legend>從帳本學分類</legend>
+        <p class="hint">選你的記帳活頁簿（.xlsx）。程式會記住每個摘要你分到哪一類，之後遇到同樣的摘要就自動分好。</p>
+        <ul class="hint wb-map">
+          <li><b>固定（Spend2）、浮動（Spend1）</b>：支出分到哪一類</li>
+          <li><b>收入（Incomes）</b>：薪資項目分到哪一類</li>
+          <li><b>轉帳（Bank）</b>：薪資扣項轉到哪個帳戶</li>
+        </ul>
+        <p class="hint">只讀摘要和類型，不會改動你的檔案，也不會上傳。帳本有新分類時再匯入一次就好。</p>
         <input type="file" id="set-workbook" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
         <p class="note" id="set-wb-msg" role="status" hidden></p>
       </fieldset>

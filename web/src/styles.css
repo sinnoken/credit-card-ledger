@@ -246,6 +246,15 @@ kbd {
 .c-x { width: 32px; } .c-desc { min-width: 260px; } .c-date { width: 100px; } .c-type { width: 190px; } .c-card { width: 150px; }
 .c-inst { width: 64px; } .c-amt { width: 92px; } .c-sheet { width: 64px; } .c-src { width: 110px; } .c-ok { width: 84px; }
 .ledger th.c-amt, td.c-amt { text-align: right; }
+.ledger th .sort {
+  font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit;
+}
+.ledger th .sort:hover { color: var(--ink); }
+/* arrows are decoration: `/ ""` keeps screen readers quiet; the plain content line is the fallback for older browsers */
+.ledger th .sort::after { content: "↕"; content: "↕" / ""; margin-left: 4px; opacity: .35; }
+.ledger th[aria-sort="ascending"] .sort, .ledger th[aria-sort="descending"] .sort { color: var(--accent); }
+.ledger th[aria-sort="ascending"] .sort::after { content: "▲"; content: "▲" / ""; opacity: 1; }
+.ledger th[aria-sort="descending"] .sort::after { content: "▼"; content: "▼" / ""; opacity: 1; }
 td.c-date, td.c-amt, td.c-inst { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
 td.c-amt.neg { color: var(--ok-ink); }
 td.c-src { font-size: 12px; color: var(--muted); }
@@ -295,8 +304,11 @@ tr.detail > td { background: var(--bg); padding: 12px 14px 14px 40px; height: au
 .pop .nores { padding: 6px 12px; color: var(--muted); font-size: 13px; }
 
 /* ---------- step 3 ---------- */
-.export { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); gap: 16px 24px; align-items: start; }
-.export-main { display: grid; gap: 12px; min-width: 0; }
+/* flex, not a fixed 2-column grid: while the gate is hidden the buttons get the full width */
+.export { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: flex-start; }
+.export-main { flex: 1 1 480px; display: grid; gap: 12px; min-width: 0; }
+.export-main .hint { max-width: none; }
+.export .gate { flex: 1 1 380px; min-width: 0; } /* grows to the full row once it wraps under the buttons */
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .gate { border: 1px solid var(--bad-ink); background: var(--bad-bg); color: var(--ink); padding: 14px 16px; display: grid; gap: 10px; }
 .gate h3 { font-size: 15px; color: var(--bad-ink); }
@@ -333,6 +345,7 @@ tr.detail > td { background: var(--bg); padding: 12px 14px 14px 40px; height: au
 .radios small { color: var(--muted); }
 .radios input { accent-color: var(--accent); }
 .grp input[type="file"] { font-size: 13px; max-width: 100%; }
+.wb-map { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
 .card-wrap { overflow-x: auto; }
 .cards { border-collapse: collapse; width: 100%; font-size: 13px; }
 .cards th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--rule-strong); }
@@ -345,7 +358,7 @@ tr.detail > td { background: var(--bg); padding: 12px 14px 14px 40px; height: au
 
 /* ---------- narrow ---------- */
 @media (max-width: 760px) {
-  .intake, .export, .det { grid-template-columns: minmax(0, 1fr); }
+  .intake, .det { grid-template-columns: minmax(0, 1fr); }
   .file-row { grid-template-columns: 14px minmax(0, 1fr) auto; grid-template-areas: "c n s" "c b d"; row-gap: 2px; }
   .file-row .caret { grid-area: c; }
   .file-row .fname { grid-area: n; }

@@ -170,8 +170,14 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '
     wb.addWorksheet('Bank').addRows([['帳戶名稱', // older sheet name still read
       '日期', '摘要', '存/提/轉', '轉入銀行', '金額', '手續費'],
       ['甲銀行', null, 'D5(儲蓄提存)', '轉帳', '儲蓄帳戶', 1000, null]]);
+    wb.addWorksheet('Spend1').addRows([['日期', '消費類型', '摘要'], [null, '外食', 'E1(餐費代扣)']]);
     const res = await S.importWorkbook(await wb.xlsx.writeBuffer());
     assert.deepStrictEqual(res.bankTargets, ['儲蓄帳戶']);
+    assert.strictEqual(res.learned[CC.util.norm('E1(餐費代扣)')].type, '外食'); // Spend1 = 浮動
+    assert.strictEqual(S.sheetLabel('浮動'), '浮動（Spend1）');
+    assert.strictEqual(S.sheetLabel('繳費'), '繳費');
+    const empty = new ExcelJS.Workbook(); empty.addWorksheet('其他');
+    await assert.rejects(S.importWorkbook(await empty.xlsx.writeBuffer()), /找不到「固定（Spend2）」「浮動（Spend1）」「收入（Incomes）」「轉帳（Bank）」任何一張工作表/);
     assert.ok(res.fixedTypes.includes('保險(個人/汽機車/房屋)'));
     const s = S.applyWorkbook(S.defaults(), res);
     s.payslip = { account: '甲銀行', companies: [] };

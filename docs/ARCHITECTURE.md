@@ -19,9 +19,9 @@ PDF 與密碼 → 讀取（pdf.js） → 銀行解析器 → OCR（只中信、�
 | OCR | `web/src/ocr.js` | 只截說明欄那一小塊，用 PP-OCRv3 辨識；模型快取在 IndexedDB |
 | 薪資單 | `web/src/payslip.js` | 解 .eml（MIME、Big5、HTML 表格）、找薪資項目與應發／應扣／實發、依設定的關鍵字判斷公司；收入列進 收入，扣項以正數記成支出；類型是活頁簿 轉帳 表學到的轉入銀行時改記到 轉帳 |
 | 分類器、核對 | `web/src/classify.js` | 剔除繳款列、分類、決定工作表、核對金額 |
-| 設定 | `web/src/settings.js` | 卡片名稱、規則、收入類型、轉入銀行、薪資入帳帳戶、學到的「摘要 → 類型」（匯入活頁簿的固定／Spend2／浮動／收入 與 轉帳 表）；存在瀏覽器，可匯出匯入 JSON |
+| 設定 | `web/src/settings.js` | 卡片名稱、規則、收入類型、轉入銀行、薪資入帳帳戶、學到的「摘要 → 類型」（匯入活頁簿的固定、浮動、收入、轉帳表，帳本裡的名稱 Spend2／Spend1／Incomes／Bank 也認得）；存在瀏覽器，可匯出匯入 JSON（匯入時學到的分類用合併，不會被舊備份蓋掉） |
 | 匯出 | `web/src/export.js` | ExcelJS 產生 .xlsx（有薪資單時多「收入」，有轉帳時多「轉帳」）；複製用的 TSV |
-| 介面 | `web/src/app.js`、`template.html`、`styles.css` | 放入 → 確認 → 匯出，以及設定抽屜 |
+| 介面 | `web/src/app.js`、`template.html`、`styles.css` | 放入 → 確認 → 匯出，以及設定抽屜；確認表可點標題排序（只影響畫面順序，不保存） |
 
 `web/build.py` 把以上檔案內嵌成單一的 `dist/index.html`。
 
@@ -42,5 +42,5 @@ PDF 與密碼 → 讀取（pdf.js） → 銀行解析器 → OCR（只中信、�
 ## 隱私
 
 - PDF、薪資單（.eml 或貼上的內文）、密碼、明細只存在分頁的記憶體裡，關掉分頁就消失。程式碼裡沒有任何公司名稱，公司由你在設定裡填的關鍵字判斷。
-- 設定存在瀏覽器的 localStorage，不含金額和密碼。
+- 設定存在瀏覽器的 localStorage，不含金額和密碼；但學到的分類含有所有摘要和薪資項目，匯出的 `cc-settings.json` 要自己保管（已列入 `.gitignore`）。
 - 頁面只從固定的 CDN 載入 pdf.js、onnxruntime-web、ExcelJS；OCR 模型和 WASM 跟著頁面一起發佈。
