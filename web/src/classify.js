@@ -118,7 +118,9 @@
     for (const r of (s && s.rules) || [])
       if ((r.words || []).some((w) => n.includes(norm(w)))) return { type: r.type, guess: false };
     const hist = (s && s.learned) || {};
-    if (Object.prototype.hasOwnProperty.call(hist, n)) return { type: hist[n].type, guess: !!hist[n].conflict };
+    // payslip-only types (收入類型, 轉入銀行) share the learned map but never classify a card row
+    const payslipOnly = (t) => ((s && s.incomeTypes) || []).includes(t) || ((s && s.bankTargets) || []).includes(t);
+    if (Object.prototype.hasOwnProperty.call(hist, n) && !payslipOnly(hist[n].type)) return { type: hist[n].type, guess: !!hist[n].conflict };
     const def = defaultTypeOf(card, s);
     if (has(desc, C.REWARD_WORDS) || desc.includes("%")) return { type: def, guess: false };
     return { type: def, guess: true };

@@ -1,4 +1,4 @@
-// node test/payslip.test.cjs — payslip e-mail / text → Incomes + 固定 rows (synthetic; real mails only when present)
+// node test/payslip.test.cjs — payslip e-mail / text → 收入 + 固定 rows (synthetic; real mails only when present)
 const path = require('path');
 const fs = require('fs');
 const assert = require('assert');
@@ -105,7 +105,7 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '
     assert.deepStrictEqual(P.detect('x', {}, s), { id: 'payslip', name: '薪資單', card: '預設帳戶' });
   });
 
-  await t('process: earnings → Incomes, deductions → positive expense rows; learned types win, unknown are guesses', () => {
+  await t('process: earnings → 收入, deductions → positive expense rows; learned types win, unknown are guesses', () => {
     const s = S.defaults();
     s.payslip = { account: '甲銀行', companies: [] };
     S.learn(s, 'B2(伙食津貼)', '各類補助');
@@ -113,8 +113,8 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '
     S.learn(s, 'C4(健保費)', '外食'); // a learned floating type keeps the row on 浮動
     const rows = P.process(P.parse(CODED), { id: 'payslip', name: '薪資單' }, s, 'a.eml');
     assert.deepStrictEqual(rows.map((r) => [r.sheet, r.type, r.desc, r.card, r.amount, r.guess, r.kind]), [
-      ['Incomes', '薪資', 'A1(本薪)', '甲銀行', 30000, true, 'income'],
-      ['Incomes', '各類補助', 'B2(伙食津貼)', '甲銀行', 2400, false, 'income'],
+      ['收入', '薪資', 'A1(本薪)', '甲銀行', 30000, true, 'income'],
+      ['收入', '各類補助', 'B2(伙食津貼)', '甲銀行', 2400, false, 'income'],
       ['固定', '保險(個人/汽機車/房屋)', 'C3(勞保費)', '甲銀行', 700, false, 'deduct'],
       ['浮動', '外食', 'C4(健保費)', '甲銀行', 450, false, 'deduct'],
       ['浮動', '外食', 'C4(健保費)', '甲銀行', 450, false, 'deduct'],
@@ -123,11 +123,11 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '
     // an expense type learned for an earning (or the reverse) is not used
     S.learn(s, 'A1(本薪)', '外食');
     assert.deepStrictEqual(P.process(P.parse('A1(本薪)\n100'), { name: '薪資單' }, s, '')[0].type, '薪資');
-    assert.strictEqual(P.sheetFor({ kind: 'income' }, '外食', s), 'Incomes');
+    assert.strictEqual(P.sheetFor({ kind: 'income' }, '外食', s), '收入');
     assert.strictEqual(P.sheetFor({ kind: 'deduct' }, '外食', s), '浮動');
   });
 
-  await t('export: incomeTSV and the Incomes sheet share columns; no Incomes sheet without earnings; payslips not in 繳費', async () => {
+  await t('export: incomeTSV and the 收入 sheet share columns; no 收入 sheet without earnings; payslips not in 繳費', async () => {
     const s = S.defaults(); s.payslip = { account: '甲銀行', companies: [] };
     const rows = P.process(P.parse(CODED), { name: '薪資單' }, s, 'a.eml');
     const inc = rows.filter((r) => r.sheet === E.INCOME_SHEET);
@@ -135,18 +135,18 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '
     assert.strictEqual(lines[0], '日期\t收入類型\t摘要\t收入形式\t金額');
     assert.strictEqual(lines[1], '2026/9/30\t薪資\tA1(本薪)\t甲銀行\t30000');
     const wb = new ExcelJS.Workbook(); await wb.xlsx.load(await E.toXlsx(rows, []));
-    const ws = wb.getWorksheet('Incomes');
+    const ws = wb.getWorksheet('收入');
     assert.deepStrictEqual(ws.getRow(1).values.slice(1), E.INCOME_HEAD);
     assert.strictEqual(ws.rowCount, 3);
     assert.strictEqual(ws.getRow(2).getCell(2).fill.fgColor.argb, 'FF' + E.FILL_GUESS); // guessed 收入類型
     assert.strictEqual(ws.getRow(3).getCell(5).value, 2400);
     assert.strictEqual(wb.getWorksheet('固定').rowCount + wb.getWorksheet('浮動').rowCount - 2, 3);
     const wb2 = new ExcelJS.Workbook(); await wb2.xlsx.load(await E.toXlsx(rows.filter((r) => r.kind !== 'income'), []));
-    assert.ok(!wb2.getWorksheet('Incomes'));
+    assert.ok(!wb2.getWorksheet('收入'));
     assert.strictEqual(E.payRows([{ kind: 'payslip', bank: '薪資單', cur: 30800 }]).length, 0);
   });
 
-  await t('settings: payslip / incomeTypes validated on import; workbook Incomes sheet is learned', async () => {
+  await t('settings: payslip / incomeTypes validated on import; workbook 收入 (or older Incomes) sheet is learned', async () => {
     const s = S.importJSON(JSON.stringify({ payslip: { account: '甲銀行', companies: [{ name: '甲', keys: ['k'], extra: 1 }] }, incomeTypes: ['薪資', '獎金'] }));
     assert.deepStrictEqual(s.payslip, { account: '甲銀行', companies: [{ name: '甲', keys: ['k'] }] });
     assert.deepStrictEqual(s.incomeTypes, ['薪資', '獎金']);
@@ -155,13 +155,51 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '
     assert.deepStrictEqual(S.importJSON('{"payslip":{"companies":[{"name":"__proto__","keys":[]}]}}').payslip.companies[0].name, '__proto__');
     const wb = new ExcelJS.Workbook();
     wb.addWorksheet('固定').addRows([['日期', '消費類型', '摘要'], [null, '保險(個人/汽機車/房屋)', 'C3(勞保費)']]);
-    wb.addWorksheet('Incomes').addRows([['日期', '收入類型', '摘要'], [null, '自訂收入', 'A1(本薪)']]);
+    wb.addWorksheet('Incomes').addRows([['日期', '收入類型', '摘要'], [null, '自訂收入', 'A1(本薪)']]); // older sheet name still read
     const res = await S.importWorkbook(await wb.xlsx.writeBuffer());
     assert.deepStrictEqual(res.incomeTypes, ['自訂收入']);
     const s2 = S.applyWorkbook(S.defaults(), res);
     assert.ok(s2.incomeTypes.includes('自訂收入') && s2.incomeTypes.includes('薪資'));
     const r = P.process(P.parse('A1(本薪)\n100\nC3(勞保費)\n-10'), { name: '薪資單' }, s2, '');
-    assert.deepStrictEqual(r.map((x) => [x.sheet, x.type, x.guess]), [['Incomes', '自訂收入', false], ['固定', '保險(個人/汽機車/房屋)', false]]);
+    assert.deepStrictEqual(r.map((x) => [x.sheet, x.type, x.guess]), [['收入', '自訂收入', false], ['固定', '保險(個人/汽機車/房屋)', false]]);
+  });
+
+  await t('轉帳: workbook 轉帳 / Spend2 sheets are learned; a deduction typed with a 轉入銀行 is a transfer row', async () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Spend2').addRows([['日期', '消費類型', '摘要'], [null, '保險(個人/汽機車/房屋)', 'C3(勞保費)']]);
+    wb.addWorksheet('Bank').addRows([['帳戶名稱', // older sheet name still read
+      '日期', '摘要', '存/提/轉', '轉入銀行', '金額', '手續費'],
+      ['甲銀行', null, 'D5(儲蓄提存)', '轉帳', '儲蓄帳戶', 1000, null]]);
+    const res = await S.importWorkbook(await wb.xlsx.writeBuffer());
+    assert.deepStrictEqual(res.bankTargets, ['儲蓄帳戶']);
+    assert.ok(res.fixedTypes.includes('保險(個人/汽機車/房屋)'));
+    const s = S.applyWorkbook(S.defaults(), res);
+    s.payslip = { account: '甲銀行', companies: [] };
+    const rows = P.process(P.parse('發薪日期：115/10/01\nA1(本薪)\n30,000\nC3(勞保費)\n-700\nD5(儲蓄提存)\n-1,000\n實發金額\n28,300'), { name: '薪資單' }, s, 'a.eml');
+    assert.deepStrictEqual(rows.map((r) => [r.sheet, r.type, r.amount, r.guess]),
+      [['收入', '薪資', 30000, true], ['固定', '保險(個人/汽機車/房屋)', 700, false], ['轉帳', '儲蓄帳戶', 1000, false]]);
+    assert.strictEqual(P.sheetFor({ kind: 'purchase' }, '儲蓄帳戶', s), '浮動', 'card rows never go to 轉帳');
+    assert.strictEqual(P.sheetFor({ kind: 'deduct' }, '儲蓄帳戶', s), '轉帳');
+    const bank = rows.filter((r) => r.sheet === E.BANK_SHEET);
+    const lines = E.bankTSV(bank).split('\n');
+    assert.strictEqual(lines[0], '帳戶名稱\t日期\t摘要\t存/提/轉\t轉入銀行\t金額\t手續費');
+    assert.strictEqual(lines[1], '甲銀行\t2026/10/1\tD5(儲蓄提存)\t轉帳\t儲蓄帳戶\t1000\t');
+    const out = new ExcelJS.Workbook(); await out.xlsx.load(await E.toXlsx(rows, []));
+    const ws = out.getWorksheet('轉帳');
+    assert.deepStrictEqual(ws.getRow(1).values.slice(1), E.BANK_HEAD);
+    assert.deepStrictEqual(ws.getRow(2).values.slice(1).map((v) => (v instanceof Date ? 'D' : v)), ['甲銀行', 'D', 'D5(儲蓄提存)', '轉帳', '儲蓄帳戶', 1000]);
+    assert.strictEqual(out.getWorksheet('固定').rowCount, 2);
+    assert.throws(() => S.importJSON('{"bankTargets":"x"}'), /bankTargets/);
+    // a card purchase with the same 摘要 never takes a 轉入銀行 / 收入類型 as its type
+    S.learn(s, 'A1(本薪)', '薪資');
+    for (const d of ['D5(儲蓄提存)', 'A1(本薪)']) {
+      const c = CC.classify.classify(d, '甲卡', s, null);
+      assert.ok(c.guess && c.type !== '儲蓄帳戶' && c.type !== '薪資', d);
+    }
+    // a backup without the target keeps it while a learned entry still uses it
+    const back = S.importJSON(JSON.stringify({ bankTargets: [] }), s);
+    assert.ok(back.bankTargets.includes('儲蓄帳戶'));
+    assert.strictEqual(P.sheetFor({ kind: 'deduct' }, '儲蓄帳戶', back), '轉帳');
   });
 
   // ---- review regressions ----
@@ -227,7 +265,7 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '
     await t('real e-mails + workbook: items already in the ledger get its type and sheet', async () => {
       const res = await S.importWorkbook(fs.readFileSync(path.join(FIX, '帳本.xlsx')));
       const s = S.applyWorkbook(S.defaults(), res);
-      let known = 0;
+      let known = 0, bank = 0;
       for (const f of emls) {
         const m = P.fromEml(fs.readFileSync(path.join(FIX, f)));
         for (const r of P.process(P.parse(m.text, m), P.detect(m.text, m, s), s, f)) {
@@ -236,10 +274,12 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '
           known++;
           assert.strictEqual(r.type, hit.type, r.desc);
           assert.strictEqual(r.guess, false);
-          assert.strictEqual(r.sheet, r.kind === 'income' ? 'Incomes' : CC.classify.sheetOf(hit.type, s));
+          assert.strictEqual(r.sheet, P.sheetFor(r, hit.type, s));
+          if (s.bankTargets.includes(hit.type)) bank++;
         }
       }
       assert.ok(known > 0, 'no payslip item matched the workbook');
+      if (res.bankTargets.length) assert.ok(bank > 0, 'the workbook has a 轉帳 sheet but no deduction went to 轉帳');
     });
   }
 

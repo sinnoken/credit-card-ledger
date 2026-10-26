@@ -7,7 +7,8 @@
  * CC.payslip.parse(text, meta?) → {closing, prev:0, cur, rows:[{desc, amount}], gross, deduct, net, earn, ded, warn?}
  *     rows: + earnings, − deductions. cur = 實發 so CC.reconcile checks Σ rows = 實發.
  * CC.payslip.detect(text, meta, s) → {id:'payslip', name, card}
- * CC.payslip.process(st, src, s, file) → OutRow[]   earnings → sheet Incomes, deductions → 固定/浮動 (positive)
+ * CC.payslip.process(st, src, s, file) → OutRow[]   earnings → sheet 收入, deductions → 固定/浮動 (positive),
+ *     or → sheet 轉帳 when the type is a 轉入銀行 from settings.bankTargets (money moved to another account)
  */
 (function (g) {
   "use strict";
@@ -15,7 +16,8 @@
   const U = CC.util;
   const P = (CC.payslip = {});
 
-  P.INCOME_SHEET = "Incomes";
+  P.INCOME_SHEET = "收入";
+  P.BANK_SHEET = "轉帳";
   P.INCOME_TYPE = "薪資";
   P.DEDUCT_TYPE = "保險(壽險/勞保/健保)";
   P.TOTALS = {
@@ -212,6 +214,7 @@
     return (c && c.account) || conf(s).account || "";
   };
   P.incomeTypes = (s) => ((s && s.incomeTypes) || []).slice();
+  P.bankTargets = (s) => ((s && s.bankTargets) || []).slice();
 
   /** Type from learned (both sheets share it) or a rule; a type of the wrong side falls back to the default (guess). */
   const typeOf = (desc, income, s) => {
@@ -227,20 +230,22 @@
     return { type: t, guess };
   };
 
-  /** Statement rows → OutRows. Deductions are written positive (an expense), like the user's 固定 sheet. */
+  /** Statement rows → OutRows. Deductions are written positive, like the user's 固定 and 轉帳 sheets. */
   P.process = (st, src, s, file) => {
     const card = accountOf(src || {}, s);
     return (st.rows || []).map((x, i) => {
       const income = x.amount > 0, desc = String(x.desc || "").trim();
-      const { type, guess } = typeOf(desc, income, s);
+      const { type, guess } = typeOf(desc, income, s), r = { kind: income ? "income" : "deduct" };
       return {
         id: (file || "payslip") + "#" + i, file: file || "", bank: "payslip",
-        sheet: income ? P.INCOME_SHEET : CC.classify.sheetOf(type, s), date: st.closing || null, type, desc, descRaw: desc,
-        card, inst: null, amount: Math.abs(CC.classify.pyRound(x.amount)), kind: income ? "income" : "deduct",
+        sheet: P.sheetFor(r, type, s), date: st.closing || null, type, desc, descRaw: desc,
+        card, inst: null, amount: Math.abs(CC.classify.pyRound(x.amount)), kind: r.kind,
         guess, ocr: false, confirmed: false, crop: null,
       };
     });
   };
-  /** Sheet for a row after the user picks a type: income rows always stay on Incomes. */
-  P.sheetFor = (r, type, s) => (r.kind === "income" ? P.INCOME_SHEET : CC.classify.sheetOf(type, s));
+  /** Sheet for a row after the user picks a type: income rows always stay on 收入; a deduction typed with a
+   *  轉入銀行 goes to 轉帳. Card rows (other kinds) never do. */
+  P.sheetFor = (r, type, s) => (r.kind === "income" ? P.INCOME_SHEET
+    : r.kind === "deduct" && P.bankTargets(s).includes(type) ? P.BANK_SHEET : CC.classify.sheetOf(type, s));
 })(globalThis);

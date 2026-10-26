@@ -26,7 +26,7 @@
   ];
 
   S.DATE_MODES = DATE_MODES;
-  // 收入類型 for payslip earnings (sheet Incomes); the workbook's Incomes sheet adds the user's own
+  // 收入類型 for payslip earnings (sheet 收入); the workbook's 收入 (or Incomes) sheet adds the user's own
   const INCOME_TYPES = ["薪資", "薪資加給", "節日績效獎金", "各類補助", "勞務兼差收入", "非勞務收入"];
 
   S.FIXED_TYPES = FIXED_TYPES;
@@ -63,6 +63,8 @@
     fixedTypes: FIXED_TYPES,
     floatingTypes: FLOATING_TYPES,
     incomeTypes: INCOME_TYPES,
+    // 轉入銀行 learned from the workbook's 轉帳 sheet: a payslip deduction of one of these types is a transfer, not an expense
+    bankTargets: [],
     // account = 收入形式 / 消費方式 of payslip rows; companies: [{name, keys:[...], account?}] matched in the e-mail
     payslip: { account: "", companies: [] },
     ocrFix: [
@@ -96,7 +98,7 @@
   const pairList = (a) => a.filter((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === "string" && typeof p[1] === "string")
     .map((p) => [p[0], p[1]]);
   const SRCS = ["manual", "workbook"];
-  const FIELDS = ["dateMode", "cards", "cardByLast4", "rules", "fixedTypes", "floatingTypes", "incomeTypes", "payslip", "ocrFix"];
+  const FIELDS = ["dateMode", "cards", "cardByLast4", "rules", "fixedTypes", "floatingTypes", "incomeTypes", "bankTargets", "payslip", "ocrFix"];
   /** payslip settings → fresh {account, companies} from own string fields only. */
   const payslipEntry = (p) => {
     const o = { account: "", companies: [] };
@@ -139,6 +141,7 @@
     if (isStrArr(o.fixedTypes)) s.fixedTypes = Array.from(new Set([...o.fixedTypes]));
     if (isStrArr(o.floatingTypes)) s.floatingTypes = o.floatingTypes.slice();
     if (isStrArr(o.incomeTypes)) s.incomeTypes = Array.from(new Set([...o.incomeTypes]));
+    if (isStrArr(o.bankTargets)) s.bankTargets = Array.from(new Set([...o.bankTargets]));
     if (isObj(o.payslip)) s.payslip = payslipEntry(o.payslip);
     if (Array.isArray(o.ocrFix)) s.ocrFix = pairList(o.ocrFix);
     return s;
@@ -196,6 +199,7 @@
     if (o.fixedTypes != null && !isStrArr(o.fixedTypes)) fail("fixedTypes 必須是文字陣列");
     if (o.floatingTypes != null && !isStrArr(o.floatingTypes)) fail("floatingTypes 必須是文字陣列");
     if (o.incomeTypes != null && !isStrArr(o.incomeTypes)) fail("incomeTypes 必須是文字陣列");
+    if (o.bankTargets != null && !isStrArr(o.bankTargets)) fail("bankTargets 必須是文字陣列");
     if (o.payslip != null) {
       if (!isObj(o.payslip)) fail("payslip 必須是物件");
       if (o.payslip.account != null && typeof o.payslip.account !== "string") fail("薪資入帳帳戶必須是文字");
@@ -266,6 +270,12 @@
       const ft = new Set(s.fixedTypes);
       for (const v of Object.values(s.learned)) if (curFixed.includes(v.type)) ft.add(v.type);
       s.fixedTypes = Array.from(ft);
+      // likewise keep 收入類型 / 轉入銀行 that kept learned entries still use, so those rows stay on 收入 / 轉帳
+      for (const f of ["incomeTypes", "bankTargets"]) {
+        const cur = isStrArr(current[f]) ? current[f] : [], keep = new Set(s[f]);
+        for (const v of Object.values(s.learned)) if (cur.includes(v.type)) keep.add(v.type);
+        s[f] = Array.from(keep);
+      }
     }
     return s;
   };
@@ -294,35 +304,40 @@
   S.unTSV = unTSV;
 
   /**
-   * Learn 摘要 → 類型 from the user's workbook (sheets 固定, 浮動, and Incomes / 收入 for payslip earnings;
-   * col B 類型, col C 摘要), like load_history().
-   * Resolves {learned, count, conflicts, fixedTypes, incomeTypes}. Later rows win; a key seen with two types gets conflict:true.
+   * Learn 摘要 → 類型 from the user's workbook (sheets 固定 (or Spend2), 浮動, and 收入 (or Incomes) for payslip
+   * earnings: col B 類型, col C 摘要; 轉帳 (or Bank): col C 摘要, col E 轉入銀行 — a payslip deduction moved to another
+   * account), like load_history().
+   * Resolves {learned, count, conflicts, fixedTypes, incomeTypes, bankTargets}. Later rows win, sheets read in the
+   * order above (轉帳 / Bank last); a key seen with two types gets conflict:true (yellow until 套用到同摘要).
    */
   S.importWorkbook = async (arrayBuffer) => {
     const X = g.ExcelJS;
     if (!X) throw new Error("Excel 元件尚未載入");
     const wb = new X.Workbook();
     try { await wb.xlsx.load(arrayBuffer); } catch (e) { throw new Error("無法讀取 Excel 檔：" + (e && e.message || e)); }
-    const hist = {}, conflict = new Set(), fixed = new Set(FIXED_TYPES), income = new Set();
+    const hist = {}, conflict = new Set(), fixed = new Set(FIXED_TYPES), income = new Set(), bank = new Set();
     let found = false;
-    for (const name of ["固定", "浮動", "Incomes", "收入"]) {
+    for (const name of ["固定", "Spend2", "浮動", "收入", "Incomes", "轉帳", "Bank"]) {
       const ws = wb.getWorksheet(name);
       if (!ws) continue;
       found = true;
+      const transfer = name === "轉帳" || name === "Bank", typeCol = transfer ? 5 : 2;
       for (let r = 2; r <= ws.rowCount; r++) {
         const row = ws.getRow(r);
-        const t = cellVal(row.getCell(2).value), d = cellVal(row.getCell(3).value);
+        const t = cellVal(row.getCell(typeCol).value), d = cellVal(row.getCell(3).value);
         if (!truthy(t) || !truthy(d)) continue;
         const type = unTSV(pyStr(t)), desc = unTSV(pyStr(d)), k = norm(desc);
         if (hasOwn(hist, k) && hist[k].type !== type) conflict.add(k);
         put(hist, k, { desc, type });
-        if (name === "固定") fixed.add(type);
-        else if (name === "Incomes" || name === "收入") income.add(type);
+        if (name === "固定" || name === "Spend2") fixed.add(type);
+        else if (name === "收入" || name === "Incomes") income.add(type);
+        else if (transfer) bank.add(type);
       }
     }
-    if (!found) throw new Error("活頁簿裡找不到「固定」「浮動」或「Incomes」工作表");
+    if (!found) throw new Error("活頁簿裡找不到「固定」「浮動」「收入」或「轉帳」工作表");
     for (const k of conflict) hist[k].conflict = true;
-    return { learned: hist, count: Object.keys(hist).length, conflicts: conflict.size, fixedTypes: Array.from(fixed), incomeTypes: Array.from(income) };
+    return { learned: hist, count: Object.keys(hist).length, conflicts: conflict.size, fixedTypes: Array.from(fixed),
+      incomeTypes: Array.from(income), bankTargets: Array.from(bank) };
   };
 
   /** Apply an importWorkbook() result to settings: workbook entries (src:'workbook') override existing
@@ -341,6 +356,9 @@
     const it = new Set(s.incomeTypes || []);
     for (const t of res.incomeTypes || []) it.add(t);
     s.incomeTypes = Array.from(it);
+    const bt = new Set(s.bankTargets || []);
+    for (const t of res.bankTargets || []) bt.add(t);
+    s.bankTargets = Array.from(bt);
     return s;
   };
 

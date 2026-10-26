@@ -52,8 +52,10 @@
     for (const t of s.floatingTypes || []) if (!seen.has(t)) { seen.add(t); out.push([t, "浮動"]); }
     return out;
   };
-  /** Payslip earnings pick from 收入類型 and stay on Incomes; every other row picks an expense type. */
-  const typesFor = (r) => (r && r.kind === "income" ? CC.payslip.incomeTypes(S.settings).map((t) => [t, "收入"]) : allTypes());
+  /** Payslip earnings pick from 收入類型 and stay on 收入; every other row picks an expense type. */
+  /** Payslip deductions may also pick a 轉入銀行 (→ 轉帳 sheet). */
+  const typesFor = (r) => (r && r.kind === "income" ? CC.payslip.incomeTypes(S.settings).map((t) => [t, "收入"])
+    : r && r.kind === "deduct" ? allTypes().concat(CC.payslip.bankTargets(S.settings).map((t) => [t, "轉帳"])) : allTypes());
   const sheetFor = (r, type) => CC.payslip.sheetFor(r, type, S.settings);
   const errMsg = (e) => (e && (e.message || e.code)) || String(e);
   function saveSettings() { try { CC.settings.save(S.settings); } catch (e) { /* storage blocked: keep in memory */ } }
@@ -294,6 +296,7 @@
     for (const x of S.rows) {
       if (U.norm(x.desc) !== key) continue;
       if ((x.kind === "income") !== (r.kind === "income")) continue; // an income type never lands on an expense row
+      if (r.sheet === CC.exporter.BANK_SHEET && x.kind !== "deduct") continue; // a 轉入銀行 only fits payslip deductions
       x.type = r.type; x.guess = false; x.sheet = sheetFor(x, r.type);
       x.user = Object.assign({}, x.user, { type: r.type });
       if (!x.ocr || x === r) x.confirmed = true;
@@ -441,8 +444,10 @@
     const fixed = S.rows.filter((r) => !r.excluded && r.sheet === "固定").length;
     const flo = S.rows.filter((r) => !r.excluded && r.sheet === "浮動").length;
     const inc = S.rows.filter((r) => !r.excluded && r.sheet === CC.exporter.INCOME_SHEET).length;
-    $("#count-total").textContent = fixed + flo + inc; $("#count-fixed").textContent = fixed; $("#count-float").textContent = flo;
+    const bank = S.rows.filter((r) => !r.excluded && r.sheet === CC.exporter.BANK_SHEET).length;
+    $("#count-total").textContent = fixed + flo + inc + bank; $("#count-fixed").textContent = fixed; $("#count-float").textContent = flo;
     $("#count-income").textContent = inc; $("#count-income-wrap").hidden = !inc;
+    $("#count-bank").textContent = bank; $("#count-bank-wrap").hidden = !bank;
     $("#review-empty").hidden = has || S.files.some((f) => f.status === "ok" || f.status === "bad");
     $("#review-bar").hidden = !has;
     const doneEmpty = has && S.filter === "pending" && v.length === 0;
@@ -572,19 +577,23 @@
     $("#gate-ack").checked = S.ack;
     const fixed = rows.filter((r) => r.sheet === "固定").length, flo = rows.filter((r) => r.sheet === "浮動").length;
     const inc = rows.filter((r) => r.sheet === CC.exporter.INCOME_SHEET).length;
+    const bank = rows.filter((r) => r.sheet === CC.exporter.BANK_SHEET).length;
     const dis = !rows.length || gated || running;
     const pay = CC.exporter.payRows(checks()).length;
     $("#btn-xlsx").disabled = dis; $("#btn-fixed").disabled = dis || !fixed; $("#btn-float").disabled = dis || !flo;
     $("#btn-pay").disabled = dis || !pay; $("#btn-income").disabled = dis || !inc; $("#btn-income").hidden = !inc;
+    $("#btn-bank").disabled = dis || !bank; $("#btn-bank").hidden = !bank;
     $("#btn-xlsx").hidden = S.dl === null;
     $("#btn-fixed").textContent = `複製固定（${fixed}）`; $("#btn-float").textContent = `複製浮動（${flo}）`;
     $("#btn-pay").textContent = `複製繳費（${pay}）`; $("#btn-income").textContent = `複製收入（${inc}）`;
+    $("#btn-bank").textContent = `複製轉帳（${bank}）`;
+    const extra = (inc ? [CC.exporter.INCOME_SHEET] : []).concat(bank ? [CC.exporter.BANK_SHEET] : []);
     const pend = S.rows.filter(isPending).length;
     $("#export-summary").textContent = !rows.length ? "等明細出來" : running ? "還在處理帳單…" :
       pend ? `還有 ${pend} 筆待確認，也可以先匯出` : "可以匯出了";
     $("#export-hint").textContent = S.dl === null
-      ? "這個環境不能存檔，請用「複製固定」「複製浮動」「複製繳費」" + (inc ? "「複製收入」" : "") + "，貼到活頁簿對應的工作表。複製的內容含標題列。"
-      : "Excel 檔含「固定」「浮動」「核對結果」「繳費」" + (inc ? "「Incomes」五" : "四") + "張工作表。複製的內容含標題列，可直接貼到活頁簿。";
+      ? "這個環境不能存檔，請用「複製固定」「複製浮動」「複製繳費」" + (inc ? "「複製收入」" : "") + (bank ? "「複製轉帳」" : "") + "，貼到活頁簿對應的工作表。複製的內容含標題列。"
+      : "Excel 檔含「固定」「浮動」「核對結果」「繳費」" + extra.map((x) => `「${x}」`).join("") + "四五六"[extra.length] + "張工作表。複製的內容含標題列，可直接貼到活頁簿。";
   }
   function exportRows(sheet) {
     return S.rows.filter((r) => !r.excluded && (!sheet || r.sheet === sheet))
@@ -620,9 +629,9 @@
     renderExport(); renderSteps();
   }
   function doCopy(sheet) {
-    const pay = sheet === "繳費", income = sheet === CC.exporter.INCOME_SHEET, box = $("#tsv-box"), ta = $("#tsv-text");
-    const rows = pay ? CC.exporter.payRows(checks()) : exportRows(sheet);
-    const tsv = pay ? CC.exporter.payTSV(checks()) : income ? CC.exporter.incomeTSV(rows) : CC.exporter.toTSV(rows);
+    const X = CC.exporter, pay = sheet === "繳費", box = $("#tsv-box"), ta = $("#tsv-text");
+    const rows = pay ? X.payRows(checks()) : exportRows(sheet);
+    const tsv = pay ? X.payTSV(checks()) : sheet === X.INCOME_SHEET ? X.incomeTSV(rows) : sheet === X.BANK_SHEET ? X.bankTSV(rows) : X.toTSV(rows);
     const fallback = () => {
       box.hidden = false; ta.value = tsv; ta.focus(); ta.select();
       msg("#export-msg", `瀏覽器不讓程式寫入剪貼簿，${sheet} ${rows.length} 筆已選取在下面，請自行複製。`, "bad");
@@ -781,6 +790,7 @@
     $("#btn-float").addEventListener("click", () => doCopy("浮動"));
     $("#btn-pay").addEventListener("click", () => doCopy("繳費"));
     $("#btn-income").addEventListener("click", () => doCopy(CC.exporter.INCOME_SHEET));
+    $("#btn-bank").addEventListener("click", () => doCopy(CC.exporter.BANK_SHEET));
     $("#slip-add").addEventListener("click", () => {
       const ta = $("#slip-text");
       if (addSlipText(ta.value)) ta.value = ""; // the pasted payslip is not left on screen
