@@ -5,7 +5,7 @@ dist/test.html   -> same page with doctype+charset for local Playwright tests
 """
 import os, shutil
 H = os.path.dirname(os.path.abspath(__file__))
-ORDER = ["core.js", "banks.js", "ocr.js", "settings.js", "classify.js", "export.js", "app.js"]
+ORDER = ["core.js", "banks.js", "ocr.js", "settings.js", "classify.js", "payslip.js", "export.js", "app.js"]
 tpl = open(os.path.join(H, "src/template.html"), encoding="utf-8").read()
 css = open(os.path.join(H, "src/styles.css"), encoding="utf-8").read()
 js = "\n".join(f"/* ===== {m} ===== */\n" + open(os.path.join(H, "src", m), encoding="utf-8").read() for m in ORDER)

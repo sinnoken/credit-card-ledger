@@ -47,6 +47,7 @@ jobs:
           node test/banks.test.cjs
           node test/banks_edge.test.cjs
           node test/logic.test.cjs
+          node test/payslip.test.cjs
 
       - uses: actions/configure-pages@v5
 

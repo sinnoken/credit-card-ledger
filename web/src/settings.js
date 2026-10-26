@@ -26,7 +26,11 @@
   ];
 
   S.DATE_MODES = DATE_MODES;
+  // 收入類型 for payslip earnings (sheet Incomes); the workbook's Incomes sheet adds the user's own
+  const INCOME_TYPES = ["薪資", "薪資加給", "節日績效獎金", "各類補助", "勞務兼差收入", "非勞務收入"];
+
   S.FIXED_TYPES = FIXED_TYPES;
+  S.INCOME_TYPES = INCOME_TYPES;
   S.DEFAULTS = Object.freeze({
     version: 1,
     dateMode: "帳單日",
@@ -58,6 +62,9 @@
     learned: {},
     fixedTypes: FIXED_TYPES,
     floatingTypes: FLOATING_TYPES,
+    incomeTypes: INCOME_TYPES,
+    // account = 收入形式 / 消費方式 of payslip rows; companies: [{name, keys:[...], account?}] matched in the e-mail
+    payslip: { account: "", companies: [] },
     ocrFix: [
       ["P i", "Pi"], ["Pi一", "Pi－"], ["支付遭", "支付連"], ["中油一", "中油－"], ["回馈", "回饋"],
       ["一國内", "－國內"], ["國内", "國內"], ["转帐", "轉帳"], ["帐", "帳"], ["费", "費"], ["缴", "繳"],
@@ -89,7 +96,21 @@
   const pairList = (a) => a.filter((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === "string" && typeof p[1] === "string")
     .map((p) => [p[0], p[1]]);
   const SRCS = ["manual", "workbook"];
-  const FIELDS = ["dateMode", "cards", "cardByLast4", "rules", "fixedTypes", "floatingTypes", "ocrFix"];
+  const FIELDS = ["dateMode", "cards", "cardByLast4", "rules", "fixedTypes", "floatingTypes", "incomeTypes", "payslip", "ocrFix"];
+  /** payslip settings → fresh {account, companies} from own string fields only. */
+  const payslipEntry = (p) => {
+    const o = { account: "", companies: [] };
+    if (!isObj(p)) return o;
+    if (hasOwn(p, "account") && typeof p.account === "string") o.account = p.account;
+    if (hasOwn(p, "companies") && Array.isArray(p.companies))
+      for (const c of p.companies) {
+        if (!isObj(c) || !hasOwn(c, "name") || typeof c.name !== "string" || !hasOwn(c, "keys") || !isStrArr(c.keys)) continue;
+        const e = { name: c.name, keys: c.keys.slice() };
+        if (hasOwn(c, "account") && typeof c.account === "string") e.account = c.account;
+        o.companies.push(e);
+      }
+    return o;
+  };
   /** learned entry → canonical shape {desc, type, conflict?, src}; missing src = 'workbook' (pre-src backups). */
   const learnedEntry = (v) => {
     if (!isObj(v) || !hasOwn(v, "desc") || !hasOwn(v, "type") || typeof v.desc !== "string" || typeof v.type !== "string") return null;
@@ -117,6 +138,8 @@
     if (isObj(o.learned)) s.learned = copyLearned(o.learned);
     if (isStrArr(o.fixedTypes)) s.fixedTypes = Array.from(new Set([...o.fixedTypes]));
     if (isStrArr(o.floatingTypes)) s.floatingTypes = o.floatingTypes.slice();
+    if (isStrArr(o.incomeTypes)) s.incomeTypes = Array.from(new Set([...o.incomeTypes]));
+    if (isObj(o.payslip)) s.payslip = payslipEntry(o.payslip);
     if (Array.isArray(o.ocrFix)) s.ocrFix = pairList(o.ocrFix);
     return s;
   };
@@ -172,6 +195,18 @@
     }
     if (o.fixedTypes != null && !isStrArr(o.fixedTypes)) fail("fixedTypes 必須是文字陣列");
     if (o.floatingTypes != null && !isStrArr(o.floatingTypes)) fail("floatingTypes 必須是文字陣列");
+    if (o.incomeTypes != null && !isStrArr(o.incomeTypes)) fail("incomeTypes 必須是文字陣列");
+    if (o.payslip != null) {
+      if (!isObj(o.payslip)) fail("payslip 必須是物件");
+      if (o.payslip.account != null && typeof o.payslip.account !== "string") fail("薪資入帳帳戶必須是文字");
+      if (o.payslip.companies != null) {
+        if (!Array.isArray(o.payslip.companies)) fail("payslip.companies 必須是陣列");
+        o.payslip.companies.forEach((c, i) => {
+          if (!isObj(c) || typeof c.name !== "string" || !isStrArr(c.keys) || (c.account != null && typeof c.account !== "string"))
+            fail("第 " + (i + 1) + " 家公司格式錯誤");
+        });
+      }
+    }
     if (o.ocrFix != null) {
       if (!Array.isArray(o.ocrFix)) fail("ocrFix 必須是陣列");
       o.ocrFix.forEach((p, i) => {
@@ -259,17 +294,18 @@
   S.unTSV = unTSV;
 
   /**
-   * Learn 摘要 → 類型 from the user's workbook (sheets 固定, 浮動; col B 類型, col C 摘要), like load_history().
-   * Resolves {learned, count, conflicts, fixedTypes}. Later rows win; a key seen with two types gets conflict:true.
+   * Learn 摘要 → 類型 from the user's workbook (sheets 固定, 浮動, and Incomes / 收入 for payslip earnings;
+   * col B 類型, col C 摘要), like load_history().
+   * Resolves {learned, count, conflicts, fixedTypes, incomeTypes}. Later rows win; a key seen with two types gets conflict:true.
    */
   S.importWorkbook = async (arrayBuffer) => {
     const X = g.ExcelJS;
     if (!X) throw new Error("Excel 元件尚未載入");
     const wb = new X.Workbook();
     try { await wb.xlsx.load(arrayBuffer); } catch (e) { throw new Error("無法讀取 Excel 檔：" + (e && e.message || e)); }
-    const hist = {}, conflict = new Set(), fixed = new Set(FIXED_TYPES);
+    const hist = {}, conflict = new Set(), fixed = new Set(FIXED_TYPES), income = new Set();
     let found = false;
-    for (const name of ["固定", "浮動"]) {
+    for (const name of ["固定", "浮動", "Incomes", "收入"]) {
       const ws = wb.getWorksheet(name);
       if (!ws) continue;
       found = true;
@@ -281,11 +317,12 @@
         if (hasOwn(hist, k) && hist[k].type !== type) conflict.add(k);
         put(hist, k, { desc, type });
         if (name === "固定") fixed.add(type);
+        else if (name === "Incomes" || name === "收入") income.add(type);
       }
     }
-    if (!found) throw new Error("活頁簿裡找不到「固定」或「浮動」工作表");
+    if (!found) throw new Error("活頁簿裡找不到「固定」「浮動」或「Incomes」工作表");
     for (const k of conflict) hist[k].conflict = true;
-    return { learned: hist, count: Object.keys(hist).length, conflicts: conflict.size, fixedTypes: Array.from(fixed) };
+    return { learned: hist, count: Object.keys(hist).length, conflicts: conflict.size, fixedTypes: Array.from(fixed), incomeTypes: Array.from(income) };
   };
 
   /** Apply an importWorkbook() result to settings: workbook entries (src:'workbook') override existing
@@ -301,6 +338,9 @@
     const ft = new Set(s.fixedTypes || []);
     for (const t of res.fixedTypes || []) ft.add(t);
     s.fixedTypes = Array.from(ft);
+    const it = new Set(s.incomeTypes || []);
+    for (const t of res.incomeTypes || []) it.add(t);
+    s.incomeTypes = Array.from(it);
     return s;
   };
 

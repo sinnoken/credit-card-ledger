@@ -52,6 +52,9 @@
     for (const t of s.floatingTypes || []) if (!seen.has(t)) { seen.add(t); out.push([t, "浮動"]); }
     return out;
   };
+  /** Payslip earnings pick from 收入類型 and stay on Incomes; every other row picks an expense type. */
+  const typesFor = (r) => (r && r.kind === "income" ? CC.payslip.incomeTypes(S.settings).map((t) => [t, "收入"]) : allTypes());
+  const sheetFor = (r, type) => CC.payslip.sheetFor(r, type, S.settings);
   const errMsg = (e) => (e && (e.message || e.code)) || String(e);
   function saveSettings() { try { CC.settings.save(S.settings); } catch (e) { /* storage blocked: keep in memory */ } }
 
@@ -66,7 +69,8 @@
   function addFiles(list) {
     let added = 0;
     for (const file of list) {
-      if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") continue;
+      const eml = /\.eml$/i.test(file.name) || file.type === "message/rfc822";
+      if (!eml && !/\.pdf$/i.test(file.name) && file.type !== "application/pdf") continue;
       const dup = S.files.find((f) => f.name === file.name && f.size === file.size);
       if (dup && !FAILED.has(dup.status)) continue;
       if (dup) {
@@ -79,10 +83,31 @@
         if (wasOpen) S.openFiles.add(dup.id);
         added++; continue;
       }
-      const f = { id: "f" + ++seq, name: file.name, size: file.size, status: "queued", buf: null, file, ocrInfo: {} };
+      const f = { id: "f" + ++seq, name: file.name, size: file.size, status: "queued", buf: null, file, ocrInfo: {}, kind: eml ? "payslip" : "statement" };
       S.files.push(f); added++;
     }
     if (added) { renderAll(); pump(); }
+  }
+  /** Pasted payslip text: kept in memory only, like the statements themselves. */
+  function addSlipText(text) {
+    text = String(text || "").trim(); if (!text) return false;
+    if (S.files.some((f) => f.text === text)) return false;
+    const n = S.files.filter((f) => f.kind === "payslip" && f.text != null).length + 1;
+    S.files.push({ id: "f" + ++seq, name: `貼上的薪資單 ${n}`, size: text.length, status: "queued", buf: null, file: null, text, ocrInfo: {}, kind: "payslip" });
+    renderAll(); pump();
+    return true;
+  }
+
+  /** Payslip (.eml bytes or pasted text) → statement; same ok/bad/warn handling as a bank statement. */
+  async function slipPhase(f) {
+    f.status = "read"; renderFiles();
+    let meta = { subject: "", from: "", date: null, text: f.text };
+    if (f.text == null) { if (!f.buf) f.buf = await f.file.arrayBuffer(); meta = CC.payslip.fromEml(f.buf); }
+    f.bank = CC.payslip.detect(meta.text, meta, S.settings);
+    f.st = CC.payslip.parse(meta.text, meta);
+    f.rec = CC.reconcile(f.st);
+    f.buf = null; f.file = null;
+    build(f);
   }
 
   async function pump() {
@@ -107,6 +132,7 @@
   async function textPhase(f) {
     f.error = null; f.ocrNote = null;
     try {
+      if (f.kind === "payslip") return await slipPhase(f);
       if (!f.buf) f.buf = await f.file.arrayBuffer();
       f.status = "decrypt"; renderFiles();
       try { f.doc = (await CC.pdf.open(f.buf, S.passwords)).doc; }
@@ -179,7 +205,7 @@
     const edits = f.edits || (f.edits = {});
     for (const o of S.rows) if (o.fid === f.id) edits[o.id] = { confirmed: o.confirmed, excluded: o.excluded, user: o.user };
     let out;
-    try { out = CC.classify.process(f.st, f.bank, S.settings, f.name) || []; }
+    try { out = (f.kind === "payslip" ? CC.payslip : CC.classify).process(f.st, f.bank, S.settings, f.name) || []; }
     catch (e) { f.status = "error"; f.error = "分類失敗：" + errMsg(e); out = []; }
     const kept = [];
     f.st.rows.forEach((r, i) => { if (!CC.classify.isPayment(r.desc, r.amount)) kept.push(i); });
@@ -193,7 +219,7 @@
       if (o) {
         r.confirmed = o.confirmed; r.excluded = o.excluded; r.user = o.user;
         if (o.user && o.user.desc != null) r.desc = o.user.desc;
-        if (o.user && o.user.type != null) { r.type = o.user.type; r.guess = false; r.sheet = CC.classify.sheetOf(r.type, S.settings); }
+        if (o.user && o.user.type != null) { r.type = o.user.type; r.guess = false; r.sheet = sheetFor(r, r.type); }
       }
     });
     f.count = out.length;
@@ -218,7 +244,7 @@
       renderAll(); return;
     }
     if (FAILED.has(f.status)) {
-      if (!f.file && !f.buf) { f.error = "請重新放入這份檔案"; renderFiles(); return; }
+      if (!f.file && !f.buf && f.text == null) { f.error = "請重新放入這份檔案"; renderFiles(); return; }
       f.status = "queued";
     }
     renderAll(); pump();
@@ -251,7 +277,7 @@
   function setType(id, type) {
     const r = S.rows.find((x) => x.id === id); if (!r || !type) return;
     S._next = neighbourInView(id);
-    r.type = type; r.guess = false; r.sheet = CC.classify.sheetOf(type, S.settings);
+    r.type = type; r.guess = false; r.sheet = sheetFor(r, type);
     r.user = Object.assign({}, r.user, { type }); r.confirmed = true;
     afterChange(id, false);
   }
@@ -267,7 +293,8 @@
     const key = U.norm(r.desc); let n = 0;
     for (const x of S.rows) {
       if (U.norm(x.desc) !== key) continue;
-      x.type = r.type; x.guess = false; x.sheet = CC.classify.sheetOf(r.type, S.settings);
+      if ((x.kind === "income") !== (r.kind === "income")) continue; // an income type never lands on an expense row
+      x.type = r.type; x.guess = false; x.sheet = sheetFor(x, r.type);
       x.user = Object.assign({}, x.user, { type: r.type });
       if (!x.ocr || x === r) x.confirmed = true;
       n++;
@@ -302,7 +329,15 @@
       const cnt = f.count != null ? f.count + " 筆" : "—";
       let more = "";
       if (open) {
-        if (f.st) {
+        if (f.st && f.kind === "payslip") {
+          const st = f.st, rc = f.rec || {};
+          more += `<dl class="recon">
+            <dt>發薪日</dt><dd>${date}</dd><dt>實發金額</dt><dd>${money(st.net)}</dd>
+            <dt>收入項目合計</dt><dd>${money(st.earn)}</dd><dt>薪資單應發</dt><dd>${money(st.gross)}</dd>
+            <dt>扣項合計</dt><dd>${money(st.ded)}</dd><dt>薪資單應扣</dt><dd>${money(st.deduct)}</dd>
+            <dt>原始項目</dt><dd>${st.rows.length} 筆</dd><dt>輸出</dt><dd>${f.count != null ? f.count + " 筆" : "—"}</dd></dl>`;
+          if (f.status === "bad") more += `<p class="file-err">收入 − 扣項 = ${money(rc.total)}，和實發 ${money(rc.expect)} 不符，這份的項目會標紅，請對照薪資單。</p>`;
+        } else if (f.st) {
           const rc = f.rec || {};
           const due = CC.exporter.dueOf(f.st.cur, f.st.due);
           more += `<dl class="recon">
@@ -317,6 +352,8 @@
         if (f.ocrNote) more += `<p class="file-err">${esc(f.ocrNote)}</p>`;
         if (f.status === "pw") more += `<div class="retry"><input type="password" id="pw-${f.id}" data-retry-pw="${f.id}" placeholder="這份的密碼" aria-label="${esc(f.name)} 的密碼" autocomplete="off"><button type="button" class="btn sm" data-retry="${f.id}">用這組密碼重試</button></div>`;
         else if (f.status === "error" || f.status === "unknown") more += `<div class="retry"><button type="button" class="btn sm" data-retry="${f.id}">重試</button></div>`;
+        // pasted text has no file to drop again: let a wrong or failed paste be removed and pasted anew
+        if (f.text != null) more += `<div class="retry"><button type="button" class="btn sm ghost" data-remove="${f.id}">移除這份</button></div>`;
       }
       return `<li class="file" data-status="${f.status}" data-open="${open ? 1 : 0}">
         <button type="button" class="file-row" data-file="${f.id}" aria-expanded="${open}">
@@ -403,7 +440,9 @@
     const has = S.rows.length > 0, v = visibleRows();
     const fixed = S.rows.filter((r) => !r.excluded && r.sheet === "固定").length;
     const flo = S.rows.filter((r) => !r.excluded && r.sheet === "浮動").length;
-    $("#count-total").textContent = fixed + flo; $("#count-fixed").textContent = fixed; $("#count-float").textContent = flo;
+    const inc = S.rows.filter((r) => !r.excluded && r.sheet === CC.exporter.INCOME_SHEET).length;
+    $("#count-total").textContent = fixed + flo + inc; $("#count-fixed").textContent = fixed; $("#count-float").textContent = flo;
+    $("#count-income").textContent = inc; $("#count-income-wrap").hidden = !inc;
     $("#review-empty").hidden = has || S.files.some((f) => f.status === "ok" || f.status === "bad");
     $("#review-bar").hidden = !has;
     const doneEmpty = has && S.filter === "pending" && v.length === 0;
@@ -456,7 +495,7 @@
     pop = { items: [], active: 0, input: inp, row: r };
     const filterPop = () => {
       const q = U.norm(inp.value);
-      pop.items = allTypes().filter(([t]) => !q || U.norm(t).includes(q));
+      pop.items = typesFor(r).filter(([t]) => !q || U.norm(t).includes(q));
       const cur = pop.items.findIndex(([t]) => t === r.type);
       pop.active = q ? 0 : Math.max(0, cur);
       drawPop();
@@ -531,20 +570,21 @@
     $("#gate").hidden = !probs.length;
     $("#gate-list").innerHTML = probs.map((p) => `<li>${esc(p.text)}</li>`).join("");
     $("#gate-ack").checked = S.ack;
-    const fixed = rows.filter((r) => r.sheet === "固定").length, flo = rows.length - fixed;
+    const fixed = rows.filter((r) => r.sheet === "固定").length, flo = rows.filter((r) => r.sheet === "浮動").length;
+    const inc = rows.filter((r) => r.sheet === CC.exporter.INCOME_SHEET).length;
     const dis = !rows.length || gated || running;
     const pay = CC.exporter.payRows(checks()).length;
     $("#btn-xlsx").disabled = dis; $("#btn-fixed").disabled = dis || !fixed; $("#btn-float").disabled = dis || !flo;
-    $("#btn-pay").disabled = dis || !pay;
+    $("#btn-pay").disabled = dis || !pay; $("#btn-income").disabled = dis || !inc; $("#btn-income").hidden = !inc;
     $("#btn-xlsx").hidden = S.dl === null;
     $("#btn-fixed").textContent = `複製固定（${fixed}）`; $("#btn-float").textContent = `複製浮動（${flo}）`;
-    $("#btn-pay").textContent = `複製繳費（${pay}）`;
+    $("#btn-pay").textContent = `複製繳費（${pay}）`; $("#btn-income").textContent = `複製收入（${inc}）`;
     const pend = S.rows.filter(isPending).length;
     $("#export-summary").textContent = !rows.length ? "等明細出來" : running ? "還在處理帳單…" :
       pend ? `還有 ${pend} 筆待確認，也可以先匯出` : "可以匯出了";
     $("#export-hint").textContent = S.dl === null
-      ? "這個環境不能存檔，請用「複製固定」「複製浮動」「複製繳費」，貼到活頁簿對應的工作表。複製的內容含標題列。"
-      : "Excel 檔含「固定」「浮動」「核對結果」「繳費」四張工作表。複製的內容含標題列，可直接貼到活頁簿。";
+      ? "這個環境不能存檔，請用「複製固定」「複製浮動」「複製繳費」" + (inc ? "「複製收入」" : "") + "，貼到活頁簿對應的工作表。複製的內容含標題列。"
+      : "Excel 檔含「固定」「浮動」「核對結果」「繳費」" + (inc ? "「Incomes」五" : "四") + "張工作表。複製的內容含標題列，可直接貼到活頁簿。";
   }
   function exportRows(sheet) {
     return S.rows.filter((r) => !r.excluded && (!sheet || r.sheet === sheet))
@@ -555,10 +595,11 @@
     return S.files.map((f) => ({
       file: f.name, bank: f.bank ? f.bank.name : "", closing: f.st ? f.st.closing : null,
       prev: f.st ? f.st.prev : null, cur: f.st ? f.st.cur : null, due: f.st ? f.st.due : null,
-      card: f.bank ? ((S.settings.cards || {})[f.bank.id] || {}).name || f.bank.card : "",
+      card: f.kind === "payslip" ? ((S.rows.find((r) => r.fid === f.id) || {}).card || "") // account as rebuilt from settings
+        : f.bank ? ((S.settings.cards || {})[f.bank.id] || {}).name || f.bank.card : "",
       total: f.rec ? f.rec.total : null, expect: f.rec ? f.rec.expect : null,
       ok: fileOk(f), count: f.count || 0, // a statement warn (st.warn) is not "OK" in 核對結果
-
+      kind: f.kind, // a payslip's 實發 is not a bill: kept out of 繳費
       error: f.status === "ok" ? (warnOf(f) ? "需核對：" + warnOf(f) : undefined)
         : f.status === "bad" ? (warnOf(f) ? "不符，請檢查；需核對：" + warnOf(f) : undefined)
         : (STATUS[f.status][0] + (f.error ? "：" + f.error : "")),
@@ -579,9 +620,9 @@
     renderExport(); renderSteps();
   }
   function doCopy(sheet) {
-    const pay = sheet === "繳費", box = $("#tsv-box"), ta = $("#tsv-text");
+    const pay = sheet === "繳費", income = sheet === CC.exporter.INCOME_SHEET, box = $("#tsv-box"), ta = $("#tsv-text");
     const rows = pay ? CC.exporter.payRows(checks()) : exportRows(sheet);
-    const tsv = pay ? CC.exporter.payTSV(checks()) : CC.exporter.toTSV(rows);
+    const tsv = pay ? CC.exporter.payTSV(checks()) : income ? CC.exporter.incomeTSV(rows) : CC.exporter.toTSV(rows);
     const fallback = () => {
       box.hidden = false; ta.value = tsv; ta.focus(); ta.select();
       msg("#export-msg", `瀏覽器不讓程式寫入剪貼簿，${sheet} ${rows.length} 筆已選取在下面，請自行複製。`, "bad");
@@ -615,6 +656,7 @@
         <td><input id="card-name-${b.id}" data-card="${b.id}" data-k="name" value="${esc(c.name)}" aria-label="${esc(b.name)} 卡片名稱"></td>
         <td><select id="card-type-${b.id}" data-card="${b.id}" data-k="defaultType" aria-label="${esc(b.name)} 預設類型">${types.map(([t]) => `<option${t === c.defaultType ? " selected" : ""}>${esc(t)}</option>`).join("")}</select></td></tr>`;
     }).join("");
+    $("#slip-account").value = (s.payslip && s.payslip.account) || "";
     const L = Object.values(s.learned || {}), conf = L.filter((x) => x && x.conflict).length;
     $("#learned-count").textContent = L.length
       ? `已學會 ${L.length} 種摘要的分類` + (conf ? `，其中 ${conf} 種在舊紀錄有兩種分法（會標黃）` : "") + "。"
@@ -657,6 +699,11 @@
     });
 
     $("#file-list").addEventListener("click", (e) => {
+      const rm = e.target.closest("[data-remove]");
+      if (rm) {
+        S.files = S.files.filter((x) => x.id !== rm.dataset.remove); S.rows = S.rows.filter((r) => r.fid !== rm.dataset.remove);
+        S.openFiles.delete(rm.dataset.remove); renderAll(); return;
+      }
       const rb = e.target.closest("[data-retry]");
       if (rb) { const f = S.files.find((x) => x.id === rb.dataset.retry); const i = doc.getElementById("pw-" + f.id); retry(f, i && i.value.trim()); return; }
       const fb = e.target.closest("[data-file]");
@@ -733,6 +780,15 @@
     $("#btn-fixed").addEventListener("click", () => doCopy("固定"));
     $("#btn-float").addEventListener("click", () => doCopy("浮動"));
     $("#btn-pay").addEventListener("click", () => doCopy("繳費"));
+    $("#btn-income").addEventListener("click", () => doCopy(CC.exporter.INCOME_SHEET));
+    $("#slip-add").addEventListener("click", () => {
+      const ta = $("#slip-text");
+      if (addSlipText(ta.value)) ta.value = ""; // the pasted payslip is not left on screen
+    });
+    $("#slip-account").addEventListener("change", (e) => {
+      S.settings.payslip = Object.assign({ companies: [] }, S.settings.payslip, { account: e.target.value.trim() });
+      saveSettings(); rebuildAll();
+    });
 
     doc.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => {
       const sec = doc.getElementById(b.dataset.goto);

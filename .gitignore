@@ -1,6 +1,7 @@
 # ---- Private data: never commit ----
 # Real statements, the user's workbook, personal settings and anything derived from them
 *.pdf
+*.eml
 *.xlsx
 *.xls
 web/test/fixtures/*

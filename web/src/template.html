@@ -35,9 +35,9 @@
 
       <div class="intake">
         <label class="drop" id="drop" for="file-input">
-          <input type="file" id="file-input" accept="application/pdf,.pdf" multiple>
+          <input type="file" id="file-input" accept="application/pdf,.pdf,.eml,message/rfc822" multiple>
           <span class="drop-title">把這個月的帳單 PDF 拖到這裡</span>
-          <span class="drop-sub">或點這裡選檔，可以一次選多份。放入後會自動開始讀取。</span>
+          <span class="drop-sub">或點這裡選檔，可以一次選多份。薪資單信件（.eml）也可以一起放。放入後會自動開始讀取。</span>
           <span class="drop-banks" id="drop-banks"></span>
         </label>
 
@@ -49,6 +49,14 @@
           </div>
           <p class="hint">每家銀行密碼不同時，全部加進來；程式會逐一嘗試。密碼只留在這個分頁的記憶體，不會存檔也不會上傳。</p>
         </div>
+
+        <details class="slip">
+          <summary>沒有 .eml？貼上薪資單內文</summary>
+          <label class="lbl" for="slip-text">從信件或薪資網頁複製整份薪資單，貼在這裡</label>
+          <textarea id="slip-text" rows="5" spellcheck="false" autocomplete="off"></textarea>
+          <div class="actions"><button type="button" class="btn sm" id="slip-add">加入薪資單</button></div>
+          <p class="hint">收入項目會進「Incomes」，扣項記成固定支出；內文只留在這個分頁的記憶體，加入後就清掉。</p>
+        </details>
       </div>
 
       <p class="note" id="ocr-msg" hidden></p>
@@ -68,7 +76,7 @@
         <span class="step-n" aria-hidden="true">2</span>
         <h2 id="s2-h">確認明細</h2>
         <p class="step-status" id="review-summary" aria-live="polite">
-          共 <b id="count-total">0</b> 筆 · 固定 <b id="count-fixed">0</b> · 浮動 <b id="count-float">0</b>
+          共 <b id="count-total">0</b> 筆 · 固定 <b id="count-fixed">0</b> · 浮動 <b id="count-float">0</b><span id="count-income-wrap" hidden> · 收入 <b id="count-income">0</b></span>
         </p>
       </div>
 
@@ -131,6 +139,7 @@
             <button type="button" class="btn" id="btn-fixed" disabled>複製固定</button>
             <button type="button" class="btn" id="btn-float" disabled>複製浮動</button>
             <button type="button" class="btn" id="btn-pay" disabled>複製繳費</button>
+            <button type="button" class="btn" id="btn-income" disabled hidden>複製收入</button>
           </div>
           <p class="hint" id="export-hint">Excel 檔含「固定」「浮動」「核對結果」「繳費」四張工作表。複製的內容含標題列，可直接貼到活頁簿。</p>
           <p class="note" id="export-msg" role="status" hidden></p>
@@ -171,7 +180,7 @@
 
       <fieldset class="grp">
         <legend>匯入分類參考（活頁簿 .xlsx）</legend>
-        <p class="hint">選你平常記帳的活頁簿，程式會讀「固定」「浮動」兩張工作表的 B 欄類型、C 欄摘要，之後同樣的摘要就照你的分法。</p>
+        <p class="hint">選你平常記帳的活頁簿，程式會讀「固定」「浮動」「Incomes」工作表的 B 欄類型、C 欄摘要，之後同樣的摘要（包括薪資項目）就照你的分法。</p>
         <input type="file" id="set-workbook" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
         <p class="note" id="set-wb-msg" role="status" hidden></p>
       </fieldset>
@@ -185,6 +194,13 @@
             <tbody id="card-body"></tbody>
           </table>
         </div>
+      </fieldset>
+
+      <fieldset class="grp">
+        <legend>薪資單</legend>
+        <label class="lbl" for="slip-account">薪資入帳帳戶</label>
+        <input id="slip-account" placeholder="例如：某某銀行" autocomplete="off">
+        <p class="hint">薪資列的「收入形式」、扣項的「消費方式」會填這個名稱。</p>
       </fieldset>
 
       <fieldset class="grp">

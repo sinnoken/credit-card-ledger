@@ -1,5 +1,5 @@
 /* export.js — CC.exporter (owner: agent C)
- * TSV for clipboard, xlsx (固定 / 浮動 / 核對結果) like convert_reference.py plus 繳費, save via downloads capability.
+ * TSV for clipboard, xlsx (固定 / 浮動 / 核對結果) like convert_reference.py plus 繳費 and Incomes (payslips), save via downloads capability.
  * ExcelJS is referenced lazily as globalThis.ExcelJS.
  */
 (function (g) {
@@ -19,7 +19,11 @@
   E.PAY_HEAD = ["信用卡名稱", "日期", "摘要", "繳款方式", "還款金額"];
   E.PAY_WIDTHS = [20, 11, 8, 20, 10];
   E.PAY_BANK = { fubon: "台北富邦銀行", ctbc: "中國信託商業銀行", mega: "兆豐銀行", tsb: "台新銀行", first: "第一銀行", tcb: "合庫銀行", bot: "臺灣銀行" };
-  E.NOTE = "說明：黃底＝類型是程式猜的；藍底＝摘要來自 OCR，可能有錯字；紅底＝金額核對不符。";
+  // payslip earnings, laid out like the user's Incomes sheet; deductions go to 固定/浮動 as expenses
+  E.INCOME_SHEET = "Incomes";
+  E.INCOME_HEAD = ["日期", "收入類型", "摘要", "收入形式", "金額"];
+  E.INCOME_WIDTHS = [11, 16, 30, 14, 10];
+  E.NOTE ="說明：黃底＝類型是程式猜的；藍底＝摘要來自 OCR，可能有錯字；紅底＝金額核對不符。";
   E.FILL_GUESS = "FFF2CC";
   E.FILL_OCR = "DDEBF7";
   E.FILL_BAD = "F8CBAD";
@@ -92,7 +96,7 @@
   /** checks → 繳費 rows {card, due, method, amount}: only statements with 本期應繳 > 0, by 繳款截止日 then card
    *  (a missing date sorts last). card is the check's card name, else the bank's default card name. */
   E.payRows = (checks) =>
-    (checks || []).filter((ck) => typeof ck.cur === "number" && ck.cur > 0).map((ck) => {
+    (checks || []).filter((ck) => ck.kind !== "payslip" && typeof ck.cur === "number" && ck.cur > 0).map((ck) => {
       const b = bankOf(ck.bank);
       return { card: ck.card || (b && b.card) || bankName(ck.bank), due: ck.due || null,
         method: (b && E.PAY_BANK[b.id]) || bankName(ck.bank), amount: ck.cur };
@@ -103,6 +107,14 @@
     const lines = [E.PAY_HEAD.join("\t")];
     for (const p of E.payRows(checks))
       lines.push([E.textCell(p.card), E.slashDate(p.due), "", E.textCell(p.method), amountCell(p.amount)].join("\t"));
+    return lines.join("\n");
+  };
+
+  /** Incomes (payslip earnings) as TSV, same columns and order as the sheet. */
+  E.incomeTSV = (rows) => {
+    const lines = [E.INCOME_HEAD.join("\t")];
+    for (const x of E.sortRows(rows || []))
+      lines.push([E.slashDate(x.date), E.textCell(x.type), E.textCell(x.desc), E.textCell(x.card), amountCell(x.amount)].join("\t"));
     return lines.join("\n");
   };
 
@@ -149,6 +161,17 @@
       r.getCell(5).numFmt = "#,##0";
     }
     E.PAY_WIDTHS.forEach((w, i) => { wp.getColumn(i + 1).width = w; });
+    const income = (rows || []).filter((r) => r.sheet === E.INCOME_SHEET);
+    if (income.length) {
+      const wi = wb.addWorksheet(E.INCOME_SHEET, { views: [{ state: "frozen", xSplit: 0, ySplit: 1, topLeftCell: "A2" }] });
+      wi.addRow(E.INCOME_HEAD).eachCell((c) => { c.font = { bold: true }; });
+      for (const x of E.sortRows(income)) {
+        const r = wi.addRow([E.toDate(x.date), x.type, x.desc, x.card, x.amount]);
+        r.getCell(1).numFmt = "yyyy/m/d";
+        if (x.guess && !x.confirmed) r.getCell(2).fill = fill(E.FILL_GUESS);
+      }
+      E.INCOME_WIDTHS.forEach((w, i) => { wi.getColumn(i + 1).width = w; });
+    }
     const buf = await wb.xlsx.writeBuffer();
     // Node returns a Buffer; normalise to an exact ArrayBuffer
     if (buf instanceof ArrayBuffer) return buf;
